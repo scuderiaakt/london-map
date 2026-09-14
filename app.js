@@ -1,13 +1,19 @@
-/* London Life Map v1.3A
-   Google Maps basemap + TfL Tube geometry.
-   v1.3A adds: layer architecture, Metro focus/minimal modes,
-   phone-first controls, local search, information panel and live location.
-   Data attribution: Transport for London.
+/* London Life Map v1.3B
+   Google Maps basemap + geographic London Underground overlay.
+   v1.3B completes the Metro rebuild: real geographic track geometry when available,
+   one physical station node, repeated M labels, hover/click line information,
+   and line selection/highlighting.
+   Tube metadata: Transport for London. Geographic track geometry: OpenStreetMap contributors.
 */
 
 const GOOGLE_KEY_STORAGE = "london_map_google_key";
-const TFL_CACHE_PREFIX = "london_tube_cache_v3_";
+const TFL_CACHE_PREFIX = "london_tube_cache_v4_";
 const TFL_CACHE_TTL = 24 * 60 * 60 * 1000;
+const TUBE_GEOMETRY_CACHE_KEY = "london_tube_geographic_bundle_v1";
+const TUBE_GEOMETRY_URLS = [
+  "https://raw.githubusercontent.com/ghcpuman902/tfl-components/main/public/data/geography/tube-geometry.json",
+  "https://tfl.manglekuo.com/data/geography/tube-geometry.json"
+];
 const LONDON_CENTER = { lat: 51.5078, lng: -0.1277 };
 
 /* Our learning aliases. Official TfL names and colours remain unchanged. */
@@ -60,6 +66,9 @@ let lineLabelOverlays = [];
 let placeOverlays = [];
 let stationRegistry = new Map();
 let lineGeometryRegistry = new Map();
+let selectedMetroLineId = null;
+let lineLabelRefreshTimer = null;
+let tubeGeometrySource = "none";
 
 let userLocationMarker = null;
 let userAccuracyCircle = null;
@@ -155,10 +164,13 @@ function initMap() {
   applyLayerState();
 
   map.addListener("click", () => {
+    clearSelectedMetroLine();
     closeDetail();
     closeAddSheet();
     hideSearchResults();
   });
+
+  map.addListener("zoom_changed", scheduleLineLabelRefresh);
 
   map.addListener("dragstart", () => {
     if (userLocationWatchId !== null) {
@@ -238,35 +250,56 @@ function initOverlayClasses() {
   };
 
   StationNodeOverlay = class StationNodeOverlay extends HtmlOverlay {
-    constructor(station, line, index, total) {
+    constructor(station) {
       super({ lat: station.lat, lng: station.lon }, "station-node");
       this.station = station;
-      this.line = line;
-      this.index = index;
-      this.total = total;
       this.mode = "focus";
+      this.selectedLineId = null;
     }
 
     onAdd() {
       super.onAdd();
-      this.div.style.background = this.line.color;
-      if (this.total > 1) this.div.classList.add("interchange");
-      this.div.title = `${this.station.name} — ${formatLineName(this.line)}`;
+
+      const lines = (this.station.lines || []).slice().sort(compareTubeLines);
+      this.div.style.background = stationNodeBackground(lines);
+      this.div.classList.toggle("interchange", lines.length > 1);
+      this.div.title = `${this.station.name} — ${lines.map(formatLineName).join(" · ")}`;
+      this.div.innerHTML = `
+        <div class="station-hover-card">
+          <div class="station-hover-title">${escapeHtml(this.station.name)}</div>
+          ${lines.map(line => `
+            <div class="station-hover-line">
+              <i class="station-hover-swatch" style="background:${line.color}"></i>
+              <span>${escapeHtml(formatLineName(line))}</span>
+            </div>
+          `).join("")}
+        </div>
+      `;
+
       this.div.addEventListener("click", event => {
         event.stopPropagation();
         showStationInfo(this.station);
       });
-      this.applyMode();
+
+      this.applyVisualState();
     }
 
     setMode(mode) {
       this.mode = mode;
-      this.applyMode();
+      this.applyVisualState();
     }
 
-    applyMode() {
+    setSelectedLine(lineId) {
+      this.selectedLineId = lineId;
+      this.applyVisualState();
+    }
+
+    applyVisualState() {
       if (!this.div) return;
       this.div.classList.toggle("metro-minimal", this.mode === "minimal");
+      const servesSelected = !this.selectedLineId || this.station.lines.some(line => line.id === this.selectedLineId);
+      this.div.classList.toggle("line-dimmed", !!this.selectedLineId && !servesSelected);
+      this.div.classList.toggle("line-selected", !!this.selectedLineId && servesSelected);
     }
 
     draw() {
@@ -275,22 +308,20 @@ function initOverlayClasses() {
       const point = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.position));
       if (!point) return;
 
-      const spread = this.total > 1 ? Math.min(9, 4 + this.total * 0.75) : 0;
-      const angle = this.total > 1 ? (Math.PI * 2 * this.index / this.total) - Math.PI / 2 : 0;
-      const dx = Math.cos(angle) * spread;
-      const dy = Math.sin(angle) * spread;
-      this.div.style.left = `${point.x + dx}px`;
-      this.div.style.top = `${point.y + dy}px`;
+      this.div.style.left = `${point.x}px`;
+      this.div.style.top = `${point.y}px`;
       this.div.style.transform = "translate(-50%, -50%)";
       this.div.style.display = this.visible ? "" : "none";
     }
   };
 
   LineLabelOverlay = class LineLabelOverlay extends HtmlOverlay {
-    constructor(position, line) {
+    constructor(position, nextPosition, line) {
       super(position, "line-map-label");
+      this.nextPosition = nextPosition || position;
       this.line = line;
       this.mode = "focus";
+      this.selectedLineId = null;
     }
 
     onAdd() {
@@ -298,28 +329,44 @@ function initOverlayClasses() {
       this.div.textContent = this.line.code;
       this.div.style.background = this.line.color;
       this.div.style.color = idealTextColor(this.line.color);
-      if (this.line.id === "northern") this.div.style.borderColor = "#fff";
-      this.applyMode();
+      if (this.line.id === "northern") this.div.style.borderColor = "rgba(255,255,255,.85)";
+      this.applyVisualState();
     }
 
     setMode(mode) {
       this.mode = mode;
-      this.applyMode();
+      this.applyVisualState();
     }
 
-    applyMode() {
+    setSelectedLine(lineId) {
+      this.selectedLineId = lineId;
+      this.applyVisualState();
+    }
+
+    applyVisualState() {
       if (!this.div) return;
       this.div.classList.toggle("metro-minimal", this.mode === "minimal");
+      this.div.classList.toggle("line-dimmed", !!this.selectedLineId && this.line.id !== this.selectedLineId);
+      this.div.classList.toggle("line-selected", !!this.selectedLineId && this.line.id === this.selectedLineId);
     }
 
     draw() {
       if (!this.div) return;
       const projection = this.getProjection();
       const point = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.position));
+      const next = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.nextPosition));
       if (!point) return;
+
+      let angle = 0;
+      if (next) {
+        angle = Math.atan2(next.y - point.y, next.x - point.x) * 180 / Math.PI;
+        if (angle > 90) angle -= 180;
+        if (angle < -90) angle += 180;
+      }
+
       this.div.style.left = `${point.x}px`;
       this.div.style.top = `${point.y}px`;
-      this.div.style.transform = "translate(-50%, -50%)";
+      this.div.style.transform = `translate(-50%, -50%) rotate(${angle.toFixed(1)}deg)`;
       this.div.style.display = this.visible ? "" : "none";
     }
   };
@@ -339,37 +386,178 @@ async function loadTubeNetwork(force = false) {
   clearTubeNetwork();
   stationRegistry = new Map();
   lineGeometryRegistry = new Map();
-  setNetworkStatus("Loading Tube geometry…");
+  selectedMetroLineId = null;
+  tubeGeometrySource = "none";
+  setNetworkStatus("Loading geographic Tube network…");
 
-  const results = await Promise.allSettled(
-    TUBE_LINES.map(line => loadLine(line, force))
-  );
+  try {
+    const bundle = await loadGeographicTubeBundle(force);
+    ingestGeographicTubeBundle(bundle);
+    tubeGeometrySource = "osm";
+  } catch (err) {
+    console.warn("Geographic track bundle unavailable; falling back to TfL route geometry.", err);
+    setNetworkStatus("Geographic track unavailable · loading TfL fallback…");
 
-  const good = results.filter(result => result.status === "fulfilled").map(result => result.value);
-  const bad = results.length - good.length;
+    const results = await Promise.allSettled(
+      TUBE_LINES.map(line => loadFallbackLine(line, force))
+    );
 
-  good.forEach(data => ingestLineData(data));
+    const good = results.filter(result => result.status === "fulfilled").map(result => result.value);
+    const bad = results.length - good.length;
+
+    good.forEach(data => ingestFallbackLineData(data));
+    tubeGeometrySource = good.length ? "tfl-fallback" : "none";
+
+    if (!good.length) {
+      setNetworkStatus("Tube data unavailable — tap ⚙ to retry", true);
+      return;
+    }
+
+    if (bad) console.warn(`${bad} fallback Tube line request(s) failed.`);
+  }
+
+  renderTubeLines();
   buildStationNodes();
+  rebuildLineLabels();
   applyLayerState();
   refreshSearchIfOpen();
 
-  if (!good.length) {
-    setNetworkStatus("Tube data unavailable — tap ⚙ to retry", true);
-  } else if (bad) {
-    setNetworkStatus(`Tube network loaded (${good.length}/${TUBE_LINES.length} lines)`);
+  if (tubeGeometrySource === "osm") {
+    setNetworkStatus("Tube network ready · geographic track");
   } else {
-    setNetworkStatus("Tube network ready");
+    setNetworkStatus("Tube network ready · smoothed fallback");
   }
 }
 
-async function loadLine(line, force = false) {
+async function loadGeographicTubeBundle(force = false) {
+  if (!force) {
+    const cached = getCache(TUBE_GEOMETRY_CACHE_KEY);
+    if (isValidGeographicBundle(cached)) return cached;
+  }
+
+  let lastError = null;
+
+  for (const url of TUBE_GEOMETRY_URLS) {
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json" }, cache: force ? "reload" : "default" });
+      if (!response.ok) throw new Error(`Geometry request returned ${response.status}`);
+      const bundle = await response.json();
+      if (!isValidGeographicBundle(bundle)) throw new Error("Unexpected geographic Tube data format");
+      setCache(TUBE_GEOMETRY_CACHE_KEY, bundle);
+      return bundle;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("Could not load geographic Tube geometry");
+}
+
+function isValidGeographicBundle(bundle) {
+  return !!(
+    bundle &&
+    bundle.lines &&
+    Array.isArray(bundle.lines.features) &&
+    bundle.stations &&
+    Array.isArray(bundle.stations.features)
+  );
+}
+
+function ingestGeographicTubeBundle(bundle) {
+  for (const feature of bundle.lines.features) {
+    const properties = feature?.properties || {};
+    const line = resolveTubeLine(properties.lineId || properties.lineName || properties.name);
+    if (!line) continue;
+
+    const paths = geoJsonGeometryToPaths(feature.geometry);
+    if (!paths.length) continue;
+
+    const existing = lineGeometryRegistry.get(line.id) || [];
+    existing.push(...paths);
+    lineGeometryRegistry.set(line.id, existing);
+  }
+
+  for (const feature of bundle.stations.features) {
+    if (feature?.geometry?.type !== "Point" || !Array.isArray(feature.geometry.coordinates)) continue;
+
+    const [lon, lat] = feature.geometry.coordinates;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+    const properties = feature.properties || {};
+    const lines = (properties.lineIds || [])
+      .map(resolveTubeLine)
+      .filter(Boolean)
+      .sort(compareTubeLines);
+
+    if (!lines.length) continue;
+
+    const name = cleanStationName(properties.label || properties.name || "Station");
+    const id = properties.featureId || properties.id || `${normalizeStationName(name)}-${lat.toFixed(5)}-${lon.toFixed(5)}`;
+
+    const existing = stationRegistry.get(id) || {
+      id,
+      name,
+      lat,
+      lon,
+      modes: new Set(["tube"]),
+      lines: []
+    };
+
+    lines.forEach(line => addStationLine(existing, line));
+    stationRegistry.set(id, existing);
+  }
+}
+
+function geoJsonGeometryToPaths(geometry) {
+  if (!geometry) return [];
+
+  if (geometry.type === "LineString") {
+    const path = normalizeCoordinatePath(geometry.coordinates);
+    return path.length >= 2 ? [path] : [];
+  }
+
+  if (geometry.type === "MultiLineString") {
+    return (geometry.coordinates || [])
+      .map(normalizeCoordinatePath)
+      .filter(path => path.length >= 2);
+  }
+
+  return [];
+}
+
+function normalizeCoordinatePath(coordinates = []) {
+  return coordinates
+    .map(pair => Array.isArray(pair) ? ({ lat: Number(pair[1]), lng: Number(pair[0]) }) : null)
+    .filter(point => point && Number.isFinite(point.lat) && Number.isFinite(point.lng));
+}
+
+function resolveTubeLine(value) {
+  if (!value) return null;
+  if (typeof value === "object" && value.id) return TUBE_LINE_BY_ID.get(value.id) || null;
+
+  const raw = String(value).trim().toLowerCase();
+  if (TUBE_LINE_BY_ID.has(raw)) return TUBE_LINE_BY_ID.get(raw);
+
+  const normalized = normalizeSearch(raw)
+    .replace(/\b(london underground|underground|tube|line)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return TUBE_LINES.find(line => {
+    const candidates = [line.id, line.name, line.code]
+      .map(item => normalizeSearch(item).replace(/\s+/g, " ").trim());
+    return candidates.includes(normalized) || candidates.some(candidate => normalized.includes(candidate));
+  }) || null;
+}
+
+async function loadFallbackLine(line, force = false) {
   const cacheKey = TFL_CACHE_PREFIX + line.id;
   if (!force) {
     const cached = getCache(cacheKey);
     if (cached) return { line, ...cached };
   }
 
-  const seqUrl = `https://api.tfl.gov.uk/Line/${encodeURIComponent(line.id)}/Route/Sequence/outbound?serviceTypes=Regular`;
+  const seqUrl = `https://api.tfl.gov.uk/Line/${encodeURIComponent(line.id)}/Route/Sequence/all?serviceTypes=Regular&excludeCrowding=true`;
   const stopsUrl = `https://api.tfl.gov.uk/Line/${encodeURIComponent(line.id)}/StopPoints`;
 
   const [sequenceRes, stopsRes] = await Promise.all([
@@ -386,13 +574,17 @@ async function loadLine(line, force = false) {
 
   const geometries = [];
   for (const encoded of (sequence.lineStrings || [])) {
-    geometries.push(...parseLineString(encoded));
+    for (const path of parseLineString(encoded)) {
+      geometries.push(smoothGeographicPath(path, 6));
+    }
   }
 
   const simplified = {
     geometries,
     stops: (Array.isArray(stops) ? stops : []).map(stop => ({
       id: stop.id,
+      stationNaptan: stop.stationNaptan,
+      hubNaptanCode: stop.hubNaptanCode,
       name: stop.commonName || stop.name || "Station",
       lat: stop.lat,
       lon: stop.lon,
@@ -438,56 +630,54 @@ function parseLineString(encoded) {
   return lines;
 }
 
-function ingestLineData(data) {
-  const { line, geometries, stops } = data;
-  lineGeometryRegistry.set(line.id, geometries);
+function smoothGeographicPath(path, subdivisions = 5) {
+  if (!Array.isArray(path) || path.length < 3) return path || [];
 
-  let longestPath = null;
+  const result = [];
 
-  for (const path of geometries) {
-    if (line.id === "northern") {
-      const casing = new google.maps.Polyline({
-        map,
-        path,
-        geodesic: false,
-        strokeColor: "#FFFFFF",
-        strokeOpacity: 0,
-        strokeWeight: 8,
-        zIndex: 17,
-        clickable: false,
-        visible: layerState.metro
-      });
-      lineRenderings.push({ polyline: casing, line, role: "casing" });
+  for (let i = 0; i < path.length - 1; i++) {
+    const p0 = path[Math.max(0, i - 1)];
+    const p1 = path[i];
+    const p2 = path[i + 1];
+    const p3 = path[Math.min(path.length - 1, i + 2)];
+
+    for (let step = 0; step < subdivisions; step++) {
+      const t = step / subdivisions;
+      const t2 = t * t;
+      const t3 = t2 * t;
+
+      const lat = 0.5 * (
+        2 * p1.lat +
+        (-p0.lat + p2.lat) * t +
+        (2 * p0.lat - 5 * p1.lat + 4 * p2.lat - p3.lat) * t2 +
+        (-p0.lat + 3 * p1.lat - 3 * p2.lat + p3.lat) * t3
+      );
+
+      const lng = 0.5 * (
+        2 * p1.lng +
+        (-p0.lng + p2.lng) * t +
+        (2 * p0.lng - 5 * p1.lng + 4 * p2.lng - p3.lng) * t2 +
+        (-p0.lng + 3 * p1.lng - 3 * p2.lng + p3.lng) * t3
+      );
+
+      result.push({ lat, lng });
     }
-
-    const polyline = new google.maps.Polyline({
-      map,
-      path,
-      geodesic: false,
-      strokeColor: line.color,
-      strokeOpacity: 0,
-      strokeWeight: 5,
-      zIndex: 20,
-      clickable: false,
-      visible: layerState.metro
-    });
-
-    lineRenderings.push({ polyline, line, role: "main" });
-    if (!longestPath || path.length > longestPath.length) longestPath = path;
   }
 
-  if (longestPath?.length) {
-    const labelPos = longestPath[Math.floor(longestPath.length * 0.52)];
-    const label = new LineLabelOverlay(labelPos, line);
-    label.setMap(map);
-    label.setVisible(layerState.metro);
-    lineLabelOverlays.push(label);
-  }
+  result.push(path[path.length - 1]);
+  return result;
+}
+
+function ingestFallbackLineData(data) {
+  const { line, geometries, stops } = data;
+  const existingGeometry = lineGeometryRegistry.get(line.id) || [];
+  existingGeometry.push(...geometries);
+  lineGeometryRegistry.set(line.id, existingGeometry);
 
   for (const stop of stops) {
-    const key = stop.id || `${stop.lat.toFixed(5)},${stop.lon.toFixed(5)},${normalizeStationName(stop.name)}`;
+    const key = stop.hubNaptanCode || stop.stationNaptan || stop.id || `${stop.lat.toFixed(5)},${stop.lon.toFixed(5)},${normalizeStationName(stop.name)}`;
     const existing = stationRegistry.get(key) || {
-      id: stop.id,
+      id: key,
       name: cleanStationName(stop.name),
       lat: stop.lat,
       lon: stop.lon,
@@ -498,7 +688,7 @@ function ingestLineData(data) {
     addStationLine(existing, line);
 
     for (const listedLine of (stop.lines || [])) {
-      const knownLine = TUBE_LINE_BY_ID.get(listedLine.id);
+      const knownLine = resolveTubeLine(listedLine.id || listedLine.name);
       if (knownLine) addStationLine(existing, knownLine);
     }
 
@@ -508,8 +698,64 @@ function ingestLineData(data) {
 }
 
 function addStationLine(station, line) {
+  if (!line) return;
   if (!station.lines.some(existing => existing.id === line.id)) {
     station.lines.push(line);
+  }
+}
+
+function renderTubeLines() {
+  lineRenderings.forEach(item => item.polyline.setMap(null));
+  lineRenderings = [];
+
+  for (const line of TUBE_LINES) {
+    const geometries = lineGeometryRegistry.get(line.id) || [];
+
+    for (const path of geometries) {
+      if (!Array.isArray(path) || path.length < 2) continue;
+
+      if (line.id === "northern") {
+        const casing = new google.maps.Polyline({
+          map,
+          path,
+          geodesic: false,
+          strokeColor: "#FFFFFF",
+          strokeOpacity: 0,
+          strokeWeight: 8,
+          zIndex: 17,
+          clickable: false,
+          visible: layerState.metro
+        });
+        lineRenderings.push({ polyline: casing, line, role: "casing" });
+      }
+
+      const main = new google.maps.Polyline({
+        map,
+        path,
+        geodesic: false,
+        strokeColor: line.color,
+        strokeOpacity: 0,
+        strokeWeight: 5,
+        zIndex: 20,
+        clickable: false,
+        visible: layerState.metro
+      });
+      lineRenderings.push({ polyline: main, line, role: "main" });
+
+      const hit = new google.maps.Polyline({
+        map,
+        path,
+        geodesic: false,
+        strokeColor: line.color,
+        strokeOpacity: 0.001,
+        strokeWeight: 20,
+        zIndex: 55,
+        clickable: true,
+        visible: layerState.metro
+      });
+      hit.addListener("click", () => selectMetroLine(line.id, { showInfo: true }));
+      lineRenderings.push({ polyline: hit, line, role: "hit" });
+    }
   }
 }
 
@@ -517,15 +763,159 @@ function buildStationNodes() {
   stationOverlays.forEach(overlay => overlay.setMap(null));
   stationOverlays = [];
 
-  for (const station of stationRegistry.values()) {
-    const lines = station.lines.slice().sort(compareTubeLines);
-    lines.forEach((line, index) => {
-      const overlay = new StationNodeOverlay(station, line, index, lines.length);
-      overlay.setMap(map);
-      overlay.setVisible(layerState.metro);
-      stationOverlays.push(overlay);
-    });
+  const stations = [...stationRegistry.values()]
+    .map(station => ({ ...station, lines: station.lines.slice().sort(compareTubeLines) }))
+    .filter(station => station.lines.length);
+
+  for (const station of stations) {
+    stationRegistry.set(station.id, station);
+    const overlay = new StationNodeOverlay(station);
+    overlay.setMap(map);
+    overlay.setVisible(layerState.metro);
+    stationOverlays.push(overlay);
   }
+}
+
+function stationNodeBackground(lines) {
+  if (!lines?.length) return "#FFFFFF";
+  if (lines.length === 1) return lines[0].color;
+
+  const step = 100 / lines.length;
+  const stops = lines.flatMap((line, index) => {
+    const start = (index * step).toFixed(3);
+    const end = ((index + 1) * step).toFixed(3);
+    return [`${line.color} ${start}%`, `${line.color} ${end}%`];
+  });
+
+  return `conic-gradient(${stops.join(", ")})`;
+}
+
+function rebuildLineLabels() {
+  lineLabelOverlays.forEach(overlay => overlay.setMap(null));
+  lineLabelOverlays = [];
+  if (!map) return;
+
+  const zoom = map.getZoom() || 12;
+  const spacingKm = lineLabelSpacingKm(zoom);
+
+  for (const line of TUBE_LINES) {
+    const geometries = lineGeometryRegistry.get(line.id) || [];
+    const seen = new Set();
+    let labelCount = 0;
+
+    for (const path of geometries) {
+      const samples = samplePathForLabels(path, spacingKm);
+
+      for (const sample of samples) {
+        const key = `${Math.round(sample.position.lat / 0.006)}:${Math.round(sample.position.lng / 0.009)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const label = new LineLabelOverlay(sample.position, sample.nextPosition, line);
+        label.setMap(map);
+        label.setVisible(layerState.metro);
+        label.setMode(layerState.metro && !layerState.rail && !layerState.places ? "focus" : "minimal");
+        label.setSelectedLine(selectedMetroLineId);
+        lineLabelOverlays.push(label);
+
+        labelCount += 1;
+        if (labelCount >= 42) break;
+      }
+
+      if (labelCount >= 42) break;
+    }
+  }
+}
+
+function lineLabelSpacingKm(zoom) {
+  if (zoom <= 10) return 7.5;
+  if (zoom <= 11) return 5.5;
+  if (zoom <= 12) return 4.0;
+  if (zoom <= 13) return 2.8;
+  if (zoom <= 14) return 1.9;
+  return 1.2;
+}
+
+function samplePathForLabels(path, spacingKm) {
+  if (!Array.isArray(path) || path.length < 2) return [];
+
+  const segmentLengths = [];
+  let total = 0;
+
+  for (let i = 0; i < path.length - 1; i++) {
+    const length = haversineKm(path[i], path[i + 1]);
+    segmentLengths.push(length);
+    total += length;
+  }
+
+  if (total < spacingKm * 0.55) return [];
+
+  const samples = [];
+  for (let target = spacingKm * 0.55; target < total; target += spacingKm) {
+    let walked = 0;
+
+    for (let i = 0; i < segmentLengths.length; i++) {
+      const segment = segmentLengths[i];
+      if (walked + segment < target) {
+        walked += segment;
+        continue;
+      }
+
+      const ratio = segment > 0 ? Math.max(0, Math.min(1, (target - walked) / segment)) : 0;
+      const a = path[i];
+      const b = path[i + 1];
+      const position = {
+        lat: a.lat + (b.lat - a.lat) * ratio,
+        lng: a.lng + (b.lng - a.lng) * ratio
+      };
+
+      const aheadRatio = Math.min(1, ratio + 0.08);
+      const nextPosition = {
+        lat: a.lat + (b.lat - a.lat) * aheadRatio,
+        lng: a.lng + (b.lng - a.lng) * aheadRatio
+      };
+
+      samples.push({ position, nextPosition });
+      break;
+    }
+  }
+
+  return samples;
+}
+
+function haversineKm(a, b) {
+  const toRad = value => value * Math.PI / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusKm * Math.asin(Math.sqrt(h));
+}
+
+function scheduleLineLabelRefresh() {
+  clearTimeout(lineLabelRefreshTimer);
+  lineLabelRefreshTimer = setTimeout(() => {
+    if (lineGeometryRegistry.size) rebuildLineLabels();
+  }, 180);
+}
+
+function selectMetroLine(lineId, options = {}) {
+  if (!TUBE_LINE_BY_ID.has(lineId)) return;
+  layerState.metro = true;
+  selectedMetroLineId = lineId;
+  applyLayerState();
+
+  const line = TUBE_LINE_BY_ID.get(lineId);
+  if (options.fit) focusTubeLine(lineId);
+  if (options.showInfo !== false) showLineInfo(line);
+}
+
+function clearSelectedMetroLine() {
+  if (!selectedMetroLineId) return;
+  selectedMetroLineId = null;
+  applyLayerState();
 }
 
 function clearTubeNetwork() {
@@ -540,6 +930,11 @@ function clearTubeNetwork() {
 /* ---------- Layer architecture ---------- */
 function toggleLayer(name) {
   layerState[name] = !layerState[name];
+
+  if (name === "metro" && !layerState.metro) {
+    selectedMetroLineId = null;
+  }
+
   applyLayerState();
 
   if (name === "rail" && layerState.rail) {
@@ -551,37 +946,54 @@ function applyLayerState() {
   const metroVisible = layerState.metro;
   const metroFocus = metroVisible && !layerState.rail && !layerState.places;
   const metroMode = metroFocus ? "focus" : "minimal";
+  const hasSelection = !!selectedMetroLineId;
 
   lineRenderings.forEach(item => {
     const { polyline, line, role } = item;
     polyline.setVisible(metroVisible);
-
     if (!metroVisible) return;
 
-    if (role === "casing") {
+    const selected = !hasSelection || line.id === selectedMetroLineId;
+
+    if (role === "hit") {
       polyline.setOptions({
-        strokeOpacity: metroFocus ? 0.90 : 0.43,
-        strokeWeight: metroFocus ? 9 : 5.4,
-        zIndex: metroFocus ? 17 : 12
+        strokeOpacity: 0.001,
+        strokeWeight: 20,
+        zIndex: selected ? 70 : 54
       });
       return;
     }
 
+    if (role === "casing") {
+      polyline.setOptions({
+        strokeOpacity: selected ? (metroFocus ? 0.94 : 0.52) : 0.05,
+        strokeWeight: selected && hasSelection ? (metroFocus ? 11 : 8) : (metroFocus ? 9 : 5.4),
+        zIndex: selected && hasSelection ? 43 : (metroFocus ? 17 : 12)
+      });
+      return;
+    }
+
+    const baseOpacity = metroFocus ? 0.98 : 0.60;
+    const dimOpacity = metroFocus ? 0.16 : 0.11;
+    const baseWeight = metroFocus ? (line.id === "northern" ? 6 : 5) : 3.2;
+
     polyline.setOptions({
-      strokeOpacity: metroFocus ? 0.97 : 0.56,
-      strokeWeight: metroFocus ? (line.id === "northern" ? 6 : 5) : 3.2,
-      zIndex: metroFocus ? 20 : 13
+      strokeOpacity: hasSelection ? (selected ? 1 : dimOpacity) : baseOpacity,
+      strokeWeight: hasSelection && selected ? (metroFocus ? 7 : 5.2) : baseWeight,
+      zIndex: hasSelection && selected ? 45 : (metroFocus ? 20 : 13)
     });
   });
 
   stationOverlays.forEach(overlay => {
     overlay.setVisible(metroVisible);
     overlay.setMode(metroMode);
+    overlay.setSelectedLine(selectedMetroLineId);
   });
 
   lineLabelOverlays.forEach(overlay => {
     overlay.setVisible(metroVisible);
     overlay.setMode(metroMode);
+    overlay.setSelectedLine(selectedMetroLineId);
   });
 
   placeOverlays.forEach(overlay => overlay.setVisible(layerState.places));
@@ -662,15 +1074,19 @@ function showPlaceInfo(place) {
 }
 
 function showLineInfo(line) {
+  const stationCount = [...stationRegistry.values()].filter(station => station.lines.some(item => item.id === line.id)).length;
   const content = el("detail-content");
   content.innerHTML = `
     <div class="detail-label">METRO LINE</div>
     <h2>${escapeHtml(formatLineName(line))}</h2>
-    <div class="sub">London Underground · official TfL colour retained.</div>
+    <div class="sub">London Underground · official TfL name and colour retained.</div>
     <div class="detail-section">
       <div class="info-row"><span>Learning alias</span><b>${escapeHtml(line.code)}</b></div>
       <div class="info-row"><span>Official name</span><b>${escapeHtml(line.name)}</b></div>
+      <div class="info-row"><span>Stations on map</span><b>${stationCount || "—"}</b></div>
+      <div class="info-row"><span>Track view</span><b>${tubeGeometrySource === "osm" ? "Geographic" : "Smoothed fallback"}</b></div>
     </div>
+    <div class="detail-section sub">This line is highlighted. Tap empty map space to clear the highlight.</div>
   `;
   openDetail();
 }
@@ -685,9 +1101,9 @@ async function showStationInfo(station) {
     <h2>${escapeHtml(station.name)}</h2>
     <div class="chips">
       ${lines.map(line => `
-        <span class="line-chip" style="background:${line.color};color:${idealTextColor(line.color)}">
+        <button class="line-chip line-chip-button" data-line-id="${escapeHtml(line.id)}" style="background:${line.color};color:${idealTextColor(line.color)}">
           ${escapeHtml(formatLineName(line))}
-        </span>
+        </button>
       `).join("")}
     </div>
     <div class="detail-section">
@@ -696,6 +1112,12 @@ async function showStationInfo(station) {
     </div>
   `;
   openDetail();
+
+  content.querySelectorAll("[data-line-id]").forEach(button => {
+    button.addEventListener("click", () => {
+      selectMetroLine(button.dataset.lineId, { showInfo: true });
+    });
+  });
 
   try {
     const busStops = await fetchNearbyBusStops(station.lat, station.lon);
@@ -794,35 +1216,12 @@ function buildSearchResults(query) {
 }
 
 function getSearchStations() {
-  const groups = new Map();
-
-  for (const station of stationRegistry.values()) {
-    /* Approximate physical grouping for search display only.
-       The real interchange/hub model is rebuilt in v1.3B. */
-    const key = [
-      normalizeStationName(station.name),
-      Number(station.lat).toFixed(3),
-      Number(station.lon).toFixed(3)
-    ].join("|");
-
-    const existing = groups.get(key) || {
-      id: station.id,
-      name: station.name,
-      lat: station.lat,
-      lon: station.lon,
-      modes: new Set(),
-      lines: []
-    };
-
-    station.lines.forEach(line => addStationLine(existing, line));
-    station.modes?.forEach?.(mode => existing.modes.add(mode));
-    groups.set(key, existing);
-  }
-
-  return [...groups.values()].map(station => ({
-    ...station,
-    lines: station.lines.slice().sort(compareTubeLines)
-  }));
+  return [...stationRegistry.values()]
+    .map(station => ({
+      ...station,
+      lines: station.lines.slice().sort(compareTubeLines)
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function searchScore(q, haystack, ...preferredFields) {
@@ -901,6 +1300,7 @@ function selectSearchResult(result) {
 
   if (result.type === "station") {
     layerState.metro = true;
+    selectedMetroLineId = null;
     applyLayerState();
     map.panTo({ lat: result.station.lat, lng: result.station.lon });
     map.setZoom(16);
@@ -909,10 +1309,7 @@ function selectSearchResult(result) {
   }
 
   if (result.type === "line") {
-    layerState.metro = true;
-    applyLayerState();
-    focusTubeLine(result.line.id);
-    showLineInfo(result.line);
+    selectMetroLine(result.line.id, { fit: true, showInfo: true });
   }
 }
 
@@ -1111,6 +1508,7 @@ function clearTfLCache() {
   Object.keys(localStorage)
     .filter(key => key.startsWith(TFL_CACHE_PREFIX))
     .forEach(key => localStorage.removeItem(key));
+  localStorage.removeItem(TUBE_GEOMETRY_CACHE_KEY);
 }
 
 function cleanStationName(name = "") {

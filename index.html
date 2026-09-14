@@ -10,7 +10,7 @@
   <title>London Life Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.3a" />
+  <link rel="stylesheet" href="styles.css?v=1.3b" />
 </head>
 <body>
   <main id="app">
@@ -62,7 +62,7 @@
     </div>
 
     <div id="network-status" class="network-status glass">Loading Tube network…</div>
-    <div class="attribution glass">Data provided by Transport for London</div>
+    <div class="attribution glass">Tube metadata © TfL · track geometry © OpenStreetMap contributors</div>
 
     <section id="detail-card" class="detail-card glass hidden" aria-live="polite" aria-label="Map information">
       <div class="sheet-handle" aria-hidden="true"></div>
@@ -75,7 +75,7 @@
       <button id="add-close" class="detail-close" aria-label="Close">×</button>
       <div class="detail-label">ADD TO MAP</div>
       <h2>Add a frequent place</h2>
-      <div class="sub">The interface is ready in v1.3A. Saving new places comes in the Places build.</div>
+      <div class="sub">Frequent-place saving comes in the Places build. Metro v1.3B is focused on the network itself.</div>
       <div class="add-options">
         <button class="add-option" data-add-method="search"><span>⌕</span><b>Search location</b><small>Choose a place by name</small></button>
         <button class="add-option" data-add-method="tap"><span>⌖</span><b>Tap map</b><small>Pick an exact point</small></button>
@@ -133,6 +133,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.3a"></script>
+  <script src="app.js?v=1.3b"></script>
 </body>
 </html>
