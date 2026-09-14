@@ -1,8 +1,7 @@
-/* London Life Map v1.3B
+/* London Life Map v1.3C
    Google Maps basemap + geographic London Underground overlay.
-   v1.3B completes the Metro rebuild: real geographic track geometry when available,
-   one physical station node, repeated M labels, hover/click line information,
-   and line selection/highlighting.
+   v1.3C adds persistent frequent places, favorites, favorite routes and route focus,
+   while preserving the geographic Metro rebuild and mobile-first interface.
    Tube metadata: Transport for London. Geographic track geometry: OpenStreetMap contributors.
 */
 
@@ -15,6 +14,10 @@ const TUBE_GEOMETRY_URLS = [
   "https://tfl.manglekuo.com/data/geography/tube-geometry.json"
 ];
 const LONDON_CENTER = { lat: 51.5078, lng: -0.1277 };
+
+/* Persistent user data. Keep these keys stable across future releases. */
+const FREQUENT_PLACES_STORAGE = "londonMap.frequentPlaces.v1";
+const FAVORITE_ROUTES_STORAGE = "londonMap.favoriteRoutes.v1";
 
 /* Our learning aliases. Official TfL names and colours remain unchanged. */
 const TUBE_LINES = [
@@ -34,20 +37,20 @@ const TUBE_LINES = [
 const TUBE_LINE_BY_ID = new Map(TUBE_LINES.map(line => [line.id, line]));
 const TUBE_LINE_ORDER = new Map(TUBE_LINES.map((line, index) => [line.id, index]));
 
-const PLACES = [
-  { name: "Eastside Halls", lat: 51.49855, lng: -0.17435, category: "Home", color: "#64A8FF", anchor: true, note: "Home base — Prince's Gardens." },
-  { name: "Imperial College London", lat: 51.49880, lng: -0.17490, category: "University", color: "#7F77FF", anchor: true, note: "South Kensington campus." },
-  { name: "Ethos Sports Centre", lat: 51.49863, lng: -0.17619, category: "Sports", color: "#4AD3B4", note: "Imperial gym and pool." },
-  { name: "Imperial College Health Centre", lat: 51.49913, lng: -0.17408, category: "Health", color: "#5FD780", note: "GP / NHS registration." },
-  { name: "South Kensington Station", lat: 51.49407, lng: -0.17392, category: "Transport", color: "#FFD25A", anchor: true, note: "District, Circle and Piccadilly connections." },
-  { name: "Boots — Gloucester Road", lat: 51.49454, lng: -0.18293, category: "Health", color: "#5FD780", note: "Pharmacy and everyday health supplies." },
-  { name: "Waitrose — Gloucester Road", lat: 51.49421, lng: -0.18278, category: "Food", color: "#C38BFF", note: "Groceries near halls." },
-  { name: "Argos — Cromwell Road", lat: 51.49491, lng: -0.18786, category: "Home", color: "#FFB15A", note: "Batteries, lamp, clock, mirror and room basics." },
-  { name: "IKEA Hammersmith", lat: 51.49212, lng: -0.22442, category: "Home", color: "#FFB15A", note: "Big room-setup shop." },
-  { name: "TK Maxx — Kensington", lat: 51.50123, lng: -0.19189, category: "Shopping", color: "#FF7B95", note: "Luggage, towels, clothes and room basics." },
-  { name: "Decathlon — Kensington", lat: 51.49908, lng: -0.19893, category: "Sports", color: "#4AD3B4", note: "Waterproof / sports equipment." },
-  { name: "Apple Brompton Road", lat: 51.49937, lng: -0.16362, category: "Tech", color: "#B8C1CD", note: "Apple support and accessories." },
-  { name: "Paddington Station", lat: 51.51543, lng: -0.17541, category: "Transport", color: "#FFD25A", anchor: true, note: "Airport and rail hub." }
+const DEFAULT_PLACES = [
+  { id: "default-eastside", name: "Eastside Halls", lat: 51.49855, lng: -0.17435, category: "Home", color: "#64A8FF", anchor: true, note: "Home base — Prince's Gardens." },
+  { id: "default-imperial", name: "Imperial College London", lat: 51.49880, lng: -0.17490, category: "University", color: "#7F77FF", anchor: true, note: "South Kensington campus." },
+  { id: "default-ethos", name: "Ethos Sports Centre", lat: 51.49863, lng: -0.17619, category: "Sports", color: "#4AD3B4", note: "Imperial gym and pool." },
+  { id: "default-health-centre", name: "Imperial College Health Centre", lat: 51.49913, lng: -0.17408, category: "Health", color: "#5FD780", note: "GP / NHS registration." },
+  { id: "default-south-kensington", name: "South Kensington Station", lat: 51.49407, lng: -0.17392, category: "Transport", color: "#FFD25A", anchor: true, note: "District, Circle and Piccadilly connections." },
+  { id: "default-boots-gloucester", name: "Boots — Gloucester Road", lat: 51.49454, lng: -0.18293, category: "Health", color: "#5FD780", note: "Pharmacy and everyday health supplies." },
+  { id: "default-waitrose-gloucester", name: "Waitrose — Gloucester Road", lat: 51.49421, lng: -0.18278, category: "Food", color: "#C38BFF", note: "Groceries near halls." },
+  { id: "default-argos-cromwell", name: "Argos — Cromwell Road", lat: 51.49491, lng: -0.18786, category: "Home", color: "#FFB15A", note: "Batteries, lamp, clock, mirror and room basics." },
+  { id: "default-ikea-hammersmith", name: "IKEA Hammersmith", lat: 51.49212, lng: -0.22442, category: "Home", color: "#FFB15A", note: "Big room-setup shop." },
+  { id: "default-tkmaxx-kensington", name: "TK Maxx — Kensington", lat: 51.50123, lng: -0.19189, category: "Shopping", color: "#FF7B95", note: "Luggage, towels, clothes and room basics." },
+  { id: "default-decathlon-kensington", name: "Decathlon — Kensington", lat: 51.49908, lng: -0.19893, category: "Sports", color: "#4AD3B4", note: "Waterproof / sports equipment." },
+  { id: "default-apple-brompton", name: "Apple Brompton Road", lat: 51.49937, lng: -0.16362, category: "Tech", color: "#B8C1CD", note: "Apple support and accessories." },
+  { id: "default-paddington", name: "Paddington Station", lat: 51.51543, lng: -0.17541, category: "Transport", color: "#FFD25A", anchor: true, note: "Airport and rail hub." }
 ];
 
 let map;
@@ -77,6 +80,14 @@ let lastUserPosition = null;
 let followUserLocation = false;
 
 let toastTimer = null;
+
+let frequentPlaces = loadFrequentPlaces();
+let favoriteRoutes = loadFavoriteRoutes();
+let activeFavoriteRouteId = null;
+let pendingTapPlace = false;
+let pendingPlaceCoordinates = null;
+let routeEditorSegments = [];
+let geocoder = null;
 
 const el = id => document.getElementById(id);
 
@@ -159,11 +170,18 @@ function initMap() {
   });
 
   trafficLayer = new google.maps.TrafficLayer();
+  geocoder = new google.maps.Geocoder();
   createPlaceMarkers();
   loadTubeNetwork();
   applyLayerState();
 
-  map.addListener("click", () => {
+  map.addListener("click", event => {
+    if (pendingTapPlace && event.latLng) {
+      pendingTapPlace = false;
+      openPlaceEditor({ lat: event.latLng.lat(), lng: event.latLng.lng() });
+      return;
+    }
+
     clearSelectedMetroLine();
     closeDetail();
     closeAddSheet();
@@ -254,7 +272,7 @@ function initOverlayClasses() {
       super({ lat: station.lat, lng: station.lon }, "station-node");
       this.station = station;
       this.mode = "focus";
-      this.selectedLineId = null;
+      this.highlightLineIds = null;
     }
 
     onAdd() {
@@ -289,17 +307,18 @@ function initOverlayClasses() {
       this.applyVisualState();
     }
 
-    setSelectedLine(lineId) {
-      this.selectedLineId = lineId;
+    setHighlightedLines(lineIds) {
+      this.highlightLineIds = lineIds ? new Set(lineIds) : null;
       this.applyVisualState();
     }
 
     applyVisualState() {
       if (!this.div) return;
       this.div.classList.toggle("metro-minimal", this.mode === "minimal");
-      const servesSelected = !this.selectedLineId || this.station.lines.some(line => line.id === this.selectedLineId);
-      this.div.classList.toggle("line-dimmed", !!this.selectedLineId && !servesSelected);
-      this.div.classList.toggle("line-selected", !!this.selectedLineId && servesSelected);
+      const hasHighlight = !!this.highlightLineIds?.size;
+      const servesSelected = !hasHighlight || this.station.lines.some(line => this.highlightLineIds.has(line.id));
+      this.div.classList.toggle("line-dimmed", hasHighlight && !servesSelected);
+      this.div.classList.toggle("line-selected", hasHighlight && servesSelected);
     }
 
     draw() {
@@ -321,7 +340,7 @@ function initOverlayClasses() {
       this.nextPosition = nextPosition || position;
       this.line = line;
       this.mode = "focus";
-      this.selectedLineId = null;
+      this.highlightLineIds = null;
     }
 
     onAdd() {
@@ -338,16 +357,17 @@ function initOverlayClasses() {
       this.applyVisualState();
     }
 
-    setSelectedLine(lineId) {
-      this.selectedLineId = lineId;
+    setHighlightedLines(lineIds) {
+      this.highlightLineIds = lineIds ? new Set(lineIds) : null;
       this.applyVisualState();
     }
 
     applyVisualState() {
       if (!this.div) return;
       this.div.classList.toggle("metro-minimal", this.mode === "minimal");
-      this.div.classList.toggle("line-dimmed", !!this.selectedLineId && this.line.id !== this.selectedLineId);
-      this.div.classList.toggle("line-selected", !!this.selectedLineId && this.line.id === this.selectedLineId);
+      const hasHighlight = !!this.highlightLineIds?.size;
+      this.div.classList.toggle("line-dimmed", hasHighlight && !this.highlightLineIds.has(this.line.id));
+      this.div.classList.toggle("line-selected", hasHighlight && this.highlightLineIds.has(this.line.id));
     }
 
     draw() {
@@ -374,7 +394,7 @@ function initOverlayClasses() {
 
 function createPlaceMarkers() {
   placeOverlays.forEach(overlay => overlay.setMap(null));
-  placeOverlays = PLACES.map(place => {
+  placeOverlays = frequentPlaces.map(place => {
     const overlay = new PlaceOverlay(place);
     overlay.setMap(map);
     overlay.setVisible(layerState.places);
@@ -815,7 +835,7 @@ function rebuildLineLabels() {
         label.setMap(map);
         label.setVisible(layerState.metro);
         label.setMode(layerState.metro && !layerState.rail && !layerState.places ? "focus" : "minimal");
-        label.setSelectedLine(selectedMetroLineId);
+        label.setHighlightedLines(getHighlightedMetroLineIds());
         lineLabelOverlays.push(label);
 
         labelCount += 1;
@@ -903,6 +923,8 @@ function scheduleLineLabelRefresh() {
 
 function selectMetroLine(lineId, options = {}) {
   if (!TUBE_LINE_BY_ID.has(lineId)) return;
+  activeFavoriteRouteId = null;
+  updateRouteFocusChip();
   layerState.metro = true;
   selectedMetroLineId = lineId;
   applyLayerState();
@@ -927,8 +949,87 @@ function clearTubeNetwork() {
   lineLabelOverlays = [];
 }
 
+
+/* ---------- Favorite route focus ---------- */
+function getActiveFavoriteRoute() {
+  return activeFavoriteRouteId
+    ? favoriteRoutes.find(route => route.id === activeFavoriteRouteId) || null
+    : null;
+}
+
+function routeMetroLineIds(route) {
+  return [...new Set(
+    (route?.segments || [])
+      .filter(segment => segment.mode === "metro" && TUBE_LINE_BY_ID.has(segment.service))
+      .map(segment => segment.service)
+  )];
+}
+
+function getHighlightedMetroLineIds() {
+  const activeRoute = getActiveFavoriteRoute();
+  const routeLines = routeMetroLineIds(activeRoute);
+  if (activeRoute && routeLines.length) return new Set(routeLines);
+  if (selectedMetroLineId) return new Set([selectedMetroLineId]);
+  return null;
+}
+
+function activateFavoriteRoute(routeId, options = {}) {
+  const route = favoriteRoutes.find(item => item.id === routeId);
+  if (!route) return;
+
+  activeFavoriteRouteId = route.id;
+  selectedMetroLineId = null;
+  route.useCount = Number(route.useCount || 0) + 1;
+  route.lastUsedAt = Date.now();
+  saveFavoriteRoutes();
+
+  const metroLines = routeMetroLineIds(route);
+  layerState.metro = metroLines.length > 0;
+  layerState.places = false;
+  layerState.rail = false;
+
+  applyLayerState();
+  updateRouteFocusChip();
+  if (metroLines.length) focusMetroLines(metroLines);
+  if (options.showInfo !== false) showFavoriteRouteInfo(route);
+  refreshSearchIfOpen();
+}
+
+function clearFavoriteRouteFocus() {
+  if (!activeFavoriteRouteId) return;
+  activeFavoriteRouteId = null;
+  updateRouteFocusChip();
+  applyLayerState();
+}
+
+function focusMetroLines(lineIds) {
+  if (!map || !lineIds?.length) return;
+  const bounds = new google.maps.LatLngBounds();
+
+  for (const lineId of lineIds) {
+    for (const path of (lineGeometryRegistry.get(lineId) || [])) {
+      path.forEach(point => bounds.extend(point));
+    }
+  }
+
+  if (!bounds.isEmpty()) map.fitBounds(bounds, 48);
+}
+
+function updateRouteFocusChip() {
+  const chip = el("route-focus-chip");
+  const route = getActiveFavoriteRoute();
+  if (!chip) return;
+  chip.classList.toggle("hidden", !route);
+  const label = chip.querySelector("[data-route-focus-name]");
+  if (label) label.textContent = route ? route.name : "";
+}
+
 /* ---------- Layer architecture ---------- */
 function toggleLayer(name) {
+  if (activeFavoriteRouteId) {
+    activeFavoriteRouteId = null;
+    updateRouteFocusChip();
+  }
   layerState[name] = !layerState[name];
 
   if (name === "metro" && !layerState.metro) {
@@ -943,17 +1044,23 @@ function toggleLayer(name) {
 }
 
 function applyLayerState() {
-  const metroVisible = layerState.metro;
-  const metroFocus = metroVisible && !layerState.rail && !layerState.places;
+  const activeRoute = getActiveFavoriteRoute();
+  const routeLineIds = routeMetroLineIds(activeRoute);
+  const routeFocus = !!activeRoute;
+  const metroVisible = routeFocus ? routeLineIds.length > 0 : layerState.metro;
+  const metroFocus = metroVisible && !routeFocus && !layerState.rail && !layerState.places;
   const metroMode = metroFocus ? "focus" : "minimal";
-  const hasSelection = !!selectedMetroLineId;
+  const highlightedLineIds = getHighlightedMetroLineIds();
+  const hasHighlight = !!highlightedLineIds?.size;
 
   lineRenderings.forEach(item => {
     const { polyline, line, role } = item;
-    polyline.setVisible(metroVisible);
-    if (!metroVisible) return;
+    const includedInRoute = !routeFocus || highlightedLineIds?.has(line.id);
+    const visible = metroVisible && includedInRoute;
+    polyline.setVisible(visible);
+    if (!visible) return;
 
-    const selected = !hasSelection || line.id === selectedMetroLineId;
+    const selected = !hasHighlight || highlightedLineIds.has(line.id);
 
     if (role === "hit") {
       polyline.setOptions({
@@ -966,51 +1073,53 @@ function applyLayerState() {
 
     if (role === "casing") {
       polyline.setOptions({
-        strokeOpacity: selected ? (metroFocus ? 0.94 : 0.52) : 0.05,
-        strokeWeight: selected && hasSelection ? (metroFocus ? 11 : 8) : (metroFocus ? 9 : 5.4),
-        zIndex: selected && hasSelection ? 43 : (metroFocus ? 17 : 12)
+        strokeOpacity: selected ? (metroFocus ? 0.94 : routeFocus ? 0.80 : 0.18) : 0.03,
+        strokeWeight: routeFocus ? 8 : selected && hasHighlight ? (metroFocus ? 11 : 7) : (metroFocus ? 9 : 4.6),
+        zIndex: selected && hasHighlight ? 43 : (metroFocus ? 17 : 12)
       });
       return;
     }
 
-    const baseOpacity = metroFocus ? 0.98 : 0.60;
-    const dimOpacity = metroFocus ? 0.16 : 0.11;
-    const baseWeight = metroFocus ? (line.id === "northern" ? 6 : 5) : 3.2;
+    const baseOpacity = metroFocus ? 0.98 : routeFocus ? 0.92 : 0.20;
+    const dimOpacity = metroFocus ? 0.16 : 0.05;
+    const baseWeight = metroFocus ? (line.id === "northern" ? 6 : 5) : routeFocus ? 5.2 : 2.8;
 
     polyline.setOptions({
-      strokeOpacity: hasSelection ? (selected ? 1 : dimOpacity) : baseOpacity,
-      strokeWeight: hasSelection && selected ? (metroFocus ? 7 : 5.2) : baseWeight,
-      zIndex: hasSelection && selected ? 45 : (metroFocus ? 20 : 13)
+      strokeOpacity: hasHighlight ? (selected ? (routeFocus ? 0.96 : 1) : dimOpacity) : baseOpacity,
+      strokeWeight: hasHighlight && selected ? (metroFocus ? 7 : routeFocus ? 6.2 : 4.8) : baseWeight,
+      zIndex: hasHighlight && selected ? 45 : (metroFocus ? 20 : 13)
     });
   });
 
   stationOverlays.forEach(overlay => {
-    overlay.setVisible(metroVisible);
+    const servesRoute = !routeFocus || overlay.station.lines.some(line => highlightedLineIds?.has(line.id));
+    overlay.setVisible(metroVisible && servesRoute);
     overlay.setMode(metroMode);
-    overlay.setSelectedLine(selectedMetroLineId);
+    overlay.setHighlightedLines(highlightedLineIds);
   });
 
   lineLabelOverlays.forEach(overlay => {
-    overlay.setVisible(metroVisible);
+    const included = !routeFocus || highlightedLineIds?.has(overlay.line.id);
+    overlay.setVisible(metroVisible && included);
     overlay.setMode(metroMode);
-    overlay.setSelectedLine(selectedMetroLineId);
+    overlay.setHighlightedLines(highlightedLineIds);
   });
 
-  placeOverlays.forEach(overlay => overlay.setVisible(layerState.places));
+  placeOverlays.forEach(overlay => overlay.setVisible(layerState.places && !routeFocus));
 
-  el("metro-btn").classList.toggle("active", layerState.metro);
-  el("metro-btn").setAttribute("aria-pressed", String(layerState.metro));
-  el("rail-btn").classList.toggle("active", layerState.rail);
-  el("rail-btn").setAttribute("aria-pressed", String(layerState.rail));
-  el("places-btn").classList.toggle("active", layerState.places);
-  el("places-btn").setAttribute("aria-pressed", String(layerState.places));
+  el("metro-btn").classList.toggle("active", layerState.metro && !routeFocus);
+  el("metro-btn").setAttribute("aria-pressed", String(layerState.metro && !routeFocus));
+  el("rail-btn").classList.toggle("active", layerState.rail && !routeFocus);
+  el("rail-btn").setAttribute("aria-pressed", String(layerState.rail && !routeFocus));
+  el("places-btn").classList.toggle("active", layerState.places && !routeFocus);
+  el("places-btn").setAttribute("aria-pressed", String(layerState.places && !routeFocus));
 
+  updateRouteFocusChip();
   applyBaseMapStyle();
 }
-
 function applyBaseMapStyle() {
   if (!map || activeMapType !== "roadmap") return;
-  const metroFocus = layerState.metro && !layerState.rail && !layerState.places;
+  const metroFocus = layerState.metro && !getActiveFavoriteRoute() && !layerState.rail && !layerState.places;
   map.setOptions({ styles: metroFocus ? METRO_FOCUS_MAP_STYLES : [] });
 }
 
@@ -1038,19 +1147,22 @@ function showMapInfo() {
   if (layerState.rail) activeLayers.push("Rail");
   if (layerState.places) activeLayers.push("Frequent Places");
 
-  const metroFocus = layerState.metro && !layerState.rail && !layerState.places;
-  const viewName = !activeLayers.length ? "Vanilla Map" : metroFocus ? "Metro Focus" : activeLayers.join(" + ");
+  const activeRoute = getActiveFavoriteRoute();
+  const metroFocus = layerState.metro && !activeRoute && !layerState.rail && !layerState.places;
+  const viewName = activeRoute ? `Favorite Route · ${activeRoute.name}` : !activeLayers.length ? "Vanilla Map" : metroFocus ? "Metro Focus" : activeLayers.join(" + ");
 
   const content = el("detail-content");
   content.innerHTML = `
     <div class="detail-label">CURRENT VIEW</div>
     <h2>${escapeHtml(viewName)}</h2>
     <div class="sub">
-      ${metroFocus
-        ? "Metro is the only active layer, so the city is dimmed and the Tube becomes the visual focus."
-        : !activeLayers.length
-          ? "No custom layers are active. This is the clean Google Maps base map."
-          : "The base city stays normal while active layers are drawn as overlays."}
+      ${activeRoute
+        ? "Favorite Route focus hides unrelated Metro services and keeps the base city normal for mixed surface + rail journeys."
+        : metroFocus
+          ? "Metro is the only active layer, so the city is dimmed and the Tube becomes the visual focus."
+          : !activeLayers.length
+            ? "No custom layers are active. This is the clean Google Maps base map."
+            : "The base city stays normal while active layers are drawn as overlays."}
     </div>
     <div class="detail-section">
       <div class="info-row"><span>Metro</span><b>${layerState.metro ? (metroFocus ? "Focus" : "Minimal overlay") : "Off"}</b></div>
@@ -1066,13 +1178,19 @@ function showMapInfo() {
 function showPlaceInfo(place) {
   const content = el("detail-content");
   content.innerHTML = `
-    <div class="detail-label">${escapeHtml(place.category.toUpperCase())}</div>
+    <div class="detail-label">${escapeHtml(String(place.category || "PLACE").toUpperCase())}</div>
     <h2>${escapeHtml(place.name)}</h2>
-    <div class="sub">${escapeHtml(place.note || "")}</div>
+    <div class="sub">${escapeHtml(place.note || "Saved frequent place")}</div>
+    <div class="detail-section">
+      <div class="info-row"><span>Coordinates</span><b>${Number(place.lat).toFixed(5)}, ${Number(place.lng).toFixed(5)}</b></div>
+    </div>
+    <div class="detail-actions">
+      <button class="danger-btn" id="delete-place-btn">Delete from Frequent Places</button>
+    </div>
   `;
+  content.querySelector("#delete-place-btn")?.addEventListener("click", () => deleteFrequentPlace(place.id));
   openDetail();
 }
-
 function showLineInfo(line) {
   const stationCount = [...stationRegistry.values()].filter(station => station.lines.some(item => item.id === line.id)).length;
   const content = el("detail-content");
@@ -1164,11 +1282,9 @@ function openDetail() {
   document.body.classList.add("detail-open");
 }
 
-function closeDetail() {
+function closeDetail(updateBody = true) {
   el("detail-card").classList.add("hidden");
-  if (el("add-sheet").classList.contains("hidden")) {
-    document.body.classList.remove("detail-open");
-  }
+  if (updateBody && allOtherSheetsClosed("detail-card")) document.body.classList.remove("detail-open");
 }
 
 function openAddSheet() {
@@ -1179,9 +1295,7 @@ function openAddSheet() {
 
 function closeAddSheet(updateBody = true) {
   el("add-sheet").classList.add("hidden");
-  if (updateBody && el("detail-card").classList.contains("hidden")) {
-    document.body.classList.remove("detail-open");
-  }
+  if (updateBody && allOtherSheetsClosed("add-sheet")) document.body.classList.remove("detail-open");
 }
 
 /* ---------- Search ---------- */
@@ -1197,7 +1311,7 @@ function buildSearchResults(query) {
     if (score > 0) results.push({ type: "line", score, line });
   }
 
-  for (const place of PLACES) {
+  for (const place of frequentPlaces) {
     const haystack = normalizeSearch(`${place.name} ${place.category} ${place.note || ""}`);
     const score = searchScore(q, haystack, normalizeSearch(place.name));
     if (score > 0) results.push({ type: "place", score, place });
@@ -1208,6 +1322,13 @@ function buildSearchResults(query) {
     const haystack = normalizeSearch(`${station.name} ${lineText} station metro underground`);
     const score = searchScore(q, haystack, normalizeSearch(station.name));
     if (score > 0) results.push({ type: "station", score, station });
+  }
+
+  for (const route of favoriteRoutes) {
+    const segmentText = (route.segments || []).map(segmentDisplayName).join(" ");
+    const haystack = normalizeSearch(`${route.name} ${segmentText} favorite route journey`);
+    const score = searchScore(q, haystack, normalizeSearch(route.name));
+    if (score > 0) results.push({ type: "route", score, route });
   }
 
   return results
@@ -1247,7 +1368,7 @@ function renderSearchResults() {
   const results = buildSearchResults(query);
   resultsNode.innerHTML = results.length
     ? results.map((result, index) => searchResultHtml(result, index)).join("")
-    : `<div class="search-result" style="cursor:default"><div class="result-icon">–</div><div><div class="result-title">No local result yet</div><div class="result-sub">Search currently covers Metro and frequent places.</div></div></div>`;
+    : `<div class="search-result" style="cursor:default"><div class="result-icon">–</div><div><div class="result-title">No local result yet</div><div class="result-sub">Search covers Metro, frequent places and favorite routes.</div></div></div>`;
 
   resultsNode.classList.remove("hidden");
 
@@ -1277,6 +1398,14 @@ function searchResultHtml(result, index) {
       </button>`;
   }
 
+  if (result.type === "route") {
+    return `
+      <button class="search-result" data-result-index="${index}" role="option">
+        <div class="result-icon">★</div>
+        <div><div class="result-title">${escapeHtml(result.route.name)}</div><div class="result-sub">${escapeHtml(routeSegmentSummary(result.route))}</div></div>
+      </button>`;
+  }
+
   return `
     <button class="search-result" data-result-index="${index}" role="option">
       <div class="result-icon">●</div>
@@ -1289,7 +1418,13 @@ function selectSearchResult(result) {
   hideSearchResults();
   el("search-input").blur();
 
+  if (result.type === "route") {
+    activateFavoriteRoute(result.route.id);
+    return;
+  }
+
   if (result.type === "place") {
+    clearFavoriteRouteFocus();
     layerState.places = true;
     applyLayerState();
     map.panTo({ lat: result.place.lat, lng: result.place.lng });
@@ -1299,6 +1434,7 @@ function selectSearchResult(result) {
   }
 
   if (result.type === "station") {
+    clearFavoriteRouteFocus();
     layerState.metro = true;
     selectedMetroLineId = null;
     applyLayerState();
@@ -1333,6 +1469,7 @@ function refreshSearchIfOpen() {
 function resultTitle(result) {
   if (result.type === "line") return formatLineName(result.line);
   if (result.type === "station") return result.station.name;
+  if (result.type === "route") return result.route.name;
   return result.place.name;
 }
 
@@ -1451,34 +1588,463 @@ function updateLocationButton() {
   button.title = tracking && !followUserLocation ? "Re-centre on my location" : "Use my location";
 }
 
-/* ---------- Add sheet placeholder ---------- */
-function handleAddMethod(method) {
+/* ---------- Persistent frequent places ---------- */
+function loadFrequentPlaces() {
+  try {
+    const raw = localStorage.getItem(FREQUENT_PLACES_STORAGE);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.filter(validSavedPlace);
+    }
+  } catch (err) {
+    console.warn("Could not load frequent places", err);
+  }
+
+  const initial = DEFAULT_PLACES.map(place => ({ ...place }));
+  try { localStorage.setItem(FREQUENT_PLACES_STORAGE, JSON.stringify(initial)); } catch {}
+  return initial;
+}
+
+function saveFrequentPlaces() {
+  try {
+    localStorage.setItem(FREQUENT_PLACES_STORAGE, JSON.stringify(frequentPlaces));
+  } catch (err) {
+    console.warn("Could not save frequent places", err);
+    showToast("Could not save this place on the device.");
+  }
+}
+
+function validSavedPlace(place) {
+  return !!(place && place.id && place.name && Number.isFinite(Number(place.lat)) && Number.isFinite(Number(place.lng)));
+}
+
+function placeColorForCategory(category) {
+  const colors = {
+    Home: "#64A8FF", University: "#7F77FF", Health: "#5FD780", Food: "#C38BFF",
+    Shopping: "#FF7B95", Sports: "#4AD3B4", Tech: "#B8C1CD", Transport: "#FFD25A",
+    Social: "#FF8EC7", Other: "#FFB15A"
+  };
+  return colors[category] || colors.Other;
+}
+
+function openPlaceEditor(coords, suggestedName = "", suggestedNote = "") {
+  pendingPlaceCoordinates = { lat: Number(coords.lat), lng: Number(coords.lng) };
+  el("place-name-input").value = suggestedName || "";
+  el("place-category-input").value = "Other";
+  el("place-note-input").value = suggestedNote || "";
+  el("place-coordinate-readout").textContent = `${pendingPlaceCoordinates.lat.toFixed(5)}, ${pendingPlaceCoordinates.lng.toFixed(5)}`;
+  closeAddSheet(false);
+  closeDetail(false);
+  el("place-editor-sheet").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+  setTimeout(() => el("place-name-input").focus(), 50);
+}
+
+function closePlaceEditor(updateBody = true) {
+  el("place-editor-sheet").classList.add("hidden");
+  pendingPlaceCoordinates = null;
+  if (updateBody && allOtherSheetsClosed("place-editor-sheet")) document.body.classList.remove("detail-open");
+}
+
+function savePlaceFromEditor() {
+  const name = el("place-name-input").value.trim();
+  if (!name || !pendingPlaceCoordinates) {
+    showToast("Give the place a name first.");
+    return;
+  }
+
+  const category = el("place-category-input").value || "Other";
+  const place = {
+    id: `place-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    name,
+    lat: pendingPlaceCoordinates.lat,
+    lng: pendingPlaceCoordinates.lng,
+    category,
+    color: placeColorForCategory(category),
+    anchor: false,
+    note: el("place-note-input").value.trim(),
+    createdAt: Date.now()
+  };
+
+  frequentPlaces.push(place);
+  saveFrequentPlaces();
+  createPlaceMarkers();
+  layerState.places = true;
+  applyLayerState();
+  closePlaceEditor();
+  map.panTo({ lat: place.lat, lng: place.lng });
+  if ((map.getZoom() || 0) < 16) map.setZoom(16);
+  showPlaceInfo(place);
+  refreshSearchIfOpen();
+  showToast(`Saved ${place.name}.`);
+}
+
+function deleteFrequentPlace(placeId) {
+  const place = frequentPlaces.find(item => item.id === placeId);
+  if (!place) return;
+  if (!window.confirm(`Delete "${place.name}" from Frequent Places?`)) return;
+
+  frequentPlaces = frequentPlaces.filter(item => item.id !== placeId);
+  saveFrequentPlaces();
+  createPlaceMarkers();
+  closeDetail();
+  renderFavoritesSheet();
+  refreshSearchIfOpen();
+  showToast(`Deleted ${place.name}.`);
+}
+
+async function handleAddMethod(method) {
+  if (method === "route") {
+    closeAddSheet(false);
+    openRouteEditor();
+    return;
+  }
+
   if (method === "current") {
-    closeAddSheet();
-    requestOrRecenterLocation();
-    showToast("Live location is ready. Saving it as a frequent place comes in the Places build.", 3300);
+    closeAddSheet(false);
+    try {
+      const position = await getCurrentPositionOnce();
+      const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
+      drawUserLocation(coords, position.coords.accuracy);
+      lastUserPosition = { coords, accuracy: position.coords.accuracy };
+      openPlaceEditor(coords);
+    } catch (error) {
+      showToast(locationErrorMessage(error), 3800);
+    }
     return;
   }
 
   if (method === "search") {
-    closeAddSheet();
-    el("search-input").focus();
-    showToast("Local search is live. Adding arbitrary Google places is next.", 3000);
+    closeAddSheet(false);
+    openLocationSearchSheet();
     return;
   }
 
   if (method === "tap") {
-    showToast("Tap-to-add will be activated when frequent-place saving lands.");
+    closeAddSheet();
+    pendingTapPlace = true;
+    showToast("Tap the exact point on the map you want to save.", 3200);
     return;
   }
 
   if (method === "centre") {
     const center = map?.getCenter();
     if (center) {
-      showToast(`Map centre ready: ${center.lat().toFixed(5)}, ${center.lng().toFixed(5)}. Saving comes next.`, 3400);
+      closeAddSheet(false);
+      openPlaceEditor({ lat: center.lat(), lng: center.lng() });
     }
   }
 }
+
+function getCurrentPositionOnce() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject({ code: 2, message: "Geolocation unavailable" });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      maximumAge: 5000,
+      timeout: 15000
+    });
+  });
+}
+
+function locationErrorMessage(error) {
+  const messages = {
+    1: "Location permission was denied. Change it in your browser/site settings and try again.",
+    2: "Your device location is currently unavailable.",
+    3: "Location request timed out. Try again."
+  };
+  return messages[error?.code] || "Could not get your location.";
+}
+
+/* ---------- Search a location for adding ---------- */
+function openLocationSearchSheet() {
+  el("location-search-input").value = "";
+  el("location-search-status").textContent = "Search London by place name or address.";
+  el("location-search-sheet").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+  setTimeout(() => el("location-search-input").focus(), 50);
+}
+
+function closeLocationSearchSheet(updateBody = true) {
+  el("location-search-sheet").classList.add("hidden");
+  if (updateBody && allOtherSheetsClosed("location-search-sheet")) document.body.classList.remove("detail-open");
+}
+
+async function geocodeLocationForPlace() {
+  const query = el("location-search-input").value.trim();
+  if (!query) return;
+  const status = el("location-search-status");
+  status.textContent = "Searching…";
+
+  try {
+    const response = await geocoder.geocode({
+      address: query,
+      region: "GB",
+      bounds: new google.maps.LatLngBounds({ lat: 51.20, lng: -0.60 }, { lat: 51.75, lng: 0.35 })
+    });
+    const result = response?.results?.[0];
+    if (!result) throw new Error("No location found");
+    const location = result.geometry.location;
+    const coords = { lat: location.lat(), lng: location.lng() };
+    closeLocationSearchSheet(false);
+    openPlaceEditor(coords, result.formatted_address || query, result.formatted_address || "");
+    map.panTo(coords);
+    if ((map.getZoom() || 0) < 16) map.setZoom(16);
+  } catch (err) {
+    console.warn("Geocoding failed", err);
+    status.textContent = "Could not search that location. If Google says REQUEST_DENIED, enable Geocoding API for the same Cloud project, or use Tap map / Current location / Map centre.";
+  }
+}
+
+/* ---------- Favorite routes ---------- */
+function loadFavoriteRoutes() {
+  try {
+    const raw = localStorage.getItem(FAVORITE_ROUTES_STORAGE);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(route => route?.id && route?.name && Array.isArray(route.segments)) : [];
+  } catch (err) {
+    console.warn("Could not load favorite routes", err);
+    return [];
+  }
+}
+
+function saveFavoriteRoutes() {
+  try {
+    localStorage.setItem(FAVORITE_ROUTES_STORAGE, JSON.stringify(favoriteRoutes));
+  } catch (err) {
+    console.warn("Could not save favorite routes", err);
+    showToast("Could not save this route on the device.");
+  }
+}
+
+function segmentDisplayName(segment) {
+  if (segment.mode === "metro") {
+    const line = TUBE_LINE_BY_ID.get(segment.service);
+    return line ? formatLineName(line) : `Metro · ${segment.service || "line"}`;
+  }
+  const labels = { rail: "Rail", tram: "Tram", bus: "Bus", walk: "Walk" };
+  const mode = labels[segment.mode] || "Transit";
+  return segment.service ? `${mode} · ${segment.service}` : mode;
+}
+
+function routeSegmentSummary(route) {
+  const parts = (route.segments || []).map(segmentDisplayName);
+  if (!parts.length) return "Favorite route";
+  return parts.slice(0, 4).join(" → ") + (parts.length > 4 ? " → …" : "");
+}
+
+function openRouteEditor() {
+  routeEditorSegments = [{ mode: "metro", service: "piccadilly" }];
+  el("route-name-input").value = "";
+  renderRouteEditorSegments();
+  el("route-editor-sheet").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+  setTimeout(() => el("route-name-input").focus(), 50);
+}
+
+function closeRouteEditor(updateBody = true) {
+  el("route-editor-sheet").classList.add("hidden");
+  routeEditorSegments = [];
+  if (updateBody && allOtherSheetsClosed("route-editor-sheet")) document.body.classList.remove("detail-open");
+}
+
+function renderRouteEditorSegments() {
+  const node = el("route-segments");
+  node.innerHTML = routeEditorSegments.map((segment, index) => routeSegmentEditorHtml(segment, index)).join("");
+
+  node.querySelectorAll("[data-segment-mode]").forEach(select => {
+    select.addEventListener("change", () => {
+      const index = Number(select.dataset.segmentMode);
+      routeEditorSegments[index].mode = select.value;
+      routeEditorSegments[index].service = select.value === "metro" ? "piccadilly" : "";
+      renderRouteEditorSegments();
+    });
+  });
+
+  node.querySelectorAll("[data-segment-service]").forEach(control => {
+    const update = () => routeEditorSegments[Number(control.dataset.segmentService)].service = control.value;
+    control.addEventListener("input", update);
+    control.addEventListener("change", update);
+  });
+
+  node.querySelectorAll("[data-remove-segment]").forEach(button => {
+    button.addEventListener("click", () => {
+      if (routeEditorSegments.length <= 1) return;
+      routeEditorSegments.splice(Number(button.dataset.removeSegment), 1);
+      renderRouteEditorSegments();
+    });
+  });
+}
+
+function routeSegmentEditorHtml(segment, index) {
+  const metroOptions = TUBE_LINES.map(line =>
+    `<option value="${escapeHtml(line.id)}" ${segment.service === line.id ? "selected" : ""}>${escapeHtml(formatLineName(line))}</option>`
+  ).join("");
+
+  const serviceControl = segment.mode === "metro"
+    ? `<select class="form-control" data-segment-service="${index}">${metroOptions}</select>`
+    : `<input class="form-control" data-segment-service="${index}" value="${escapeHtml(segment.service || "")}" placeholder="${segmentPlaceholder(segment.mode)}" />`;
+
+  return `
+    <div class="route-segment-row">
+      <span class="route-step">${index + 1}</span>
+      <select class="form-control route-mode" data-segment-mode="${index}">
+        <option value="metro" ${segment.mode === "metro" ? "selected" : ""}>Metro</option>
+        <option value="rail" ${segment.mode === "rail" ? "selected" : ""}>Rail</option>
+        <option value="tram" ${segment.mode === "tram" ? "selected" : ""}>Tram</option>
+        <option value="bus" ${segment.mode === "bus" ? "selected" : ""}>Bus</option>
+        <option value="walk" ${segment.mode === "walk" ? "selected" : ""}>Walk</option>
+      </select>
+      <div class="route-service">${serviceControl}</div>
+      <button class="mini-danger" data-remove-segment="${index}" title="Remove segment">×</button>
+    </div>`;
+}
+
+function segmentPlaceholder(mode) {
+  if (mode === "bus") return "e.g. 49";
+  if (mode === "tram") return "e.g. Tramlink / route";
+  if (mode === "rail") return "e.g. Elizabeth / DLR";
+  if (mode === "walk") return "e.g. Walk to station";
+  return "Service";
+}
+
+function addRouteEditorSegment() {
+  routeEditorSegments.push({ mode: "metro", service: "piccadilly" });
+  renderRouteEditorSegments();
+}
+
+function saveFavoriteRouteFromEditor() {
+  const name = el("route-name-input").value.trim();
+  const segments = routeEditorSegments
+    .map(segment => ({ mode: segment.mode, service: String(segment.service || "").trim() }))
+    .filter(segment => segment.mode === "walk" || segment.service);
+
+  if (!name) { showToast("Give the route a name first."); return; }
+  if (!segments.length) { showToast("Add at least one route segment."); return; }
+
+  const route = {
+    id: `route-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    name, segments, useCount: 0, createdAt: Date.now()
+  };
+
+  favoriteRoutes.push(route);
+  saveFavoriteRoutes();
+  closeRouteEditor();
+  renderFavoritesSheet();
+  refreshSearchIfOpen();
+  showToast(`Saved route: ${route.name}`);
+}
+
+function deleteFavoriteRoute(routeId) {
+  const route = favoriteRoutes.find(item => item.id === routeId);
+  if (!route) return;
+  if (!window.confirm(`Delete favorite route "${route.name}"?`)) return;
+
+  favoriteRoutes = favoriteRoutes.filter(item => item.id !== routeId);
+  if (activeFavoriteRouteId === routeId) activeFavoriteRouteId = null;
+  saveFavoriteRoutes();
+  applyLayerState();
+  renderFavoritesSheet();
+  closeDetail();
+  refreshSearchIfOpen();
+  showToast(`Deleted route: ${route.name}`);
+}
+
+function showFavoriteRouteInfo(route) {
+  const content = el("detail-content");
+  content.innerHTML = `
+    <div class="detail-label">FAVORITE ROUTE</div>
+    <h2>${escapeHtml(route.name)}</h2>
+    <div class="sub">${escapeHtml(routeSegmentSummary(route))}</div>
+    <div class="detail-section route-segment-list">
+      ${(route.segments || []).map((segment, index) => `
+        <div class="route-info-row"><span class="route-step">${index + 1}</span><b>${escapeHtml(segmentDisplayName(segment))}</b></div>
+      `).join("")}
+    </div>
+    <div class="detail-section">
+      <div class="info-row"><span>Times opened</span><b>${Number(route.useCount || 0)}</b></div>
+      <div class="info-row"><span>Map focus</span><b>${routeMetroLineIds(route).length ? "Metro segments isolated" : "No mapped segment yet"}</b></div>
+    </div>
+    <div class="sub detail-section">Rail, Tram and Bus segments are saved now. They will become map-visible automatically as those network layers are added in later builds.</div>
+    <div class="detail-actions">
+      <button class="secondary-btn compact-btn" id="exit-route-focus-btn">Exit route focus</button>
+      <button class="danger-btn" id="delete-route-btn">Delete favorite route</button>
+    </div>
+  `;
+
+  content.querySelector("#exit-route-focus-btn")?.addEventListener("click", () => { clearFavoriteRouteFocus(); closeDetail(); });
+  content.querySelector("#delete-route-btn")?.addEventListener("click", () => deleteFavoriteRoute(route.id));
+  openDetail();
+}
+
+/* ---------- Favorites panel ---------- */
+function openFavoritesSheet() {
+  renderFavoritesSheet();
+  closeAddSheet(false);
+  closeDetail(false);
+  el("favorites-sheet").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+}
+
+function closeFavoritesSheet(updateBody = true) {
+  el("favorites-sheet").classList.add("hidden");
+  if (updateBody && allOtherSheetsClosed("favorites-sheet")) document.body.classList.remove("detail-open");
+}
+
+function renderFavoritesSheet() {
+  const placesNode = el("favorite-places-list");
+  const routesNode = el("favorite-routes-list");
+  if (!placesNode || !routesNode) return;
+
+  placesNode.innerHTML = frequentPlaces.length
+    ? frequentPlaces.map(place => `
+        <div class="favorite-row">
+          <button class="favorite-main" data-open-place="${escapeHtml(place.id)}">
+            <span class="favorite-symbol" style="background:${place.color}">●</span>
+            <span><b>${escapeHtml(place.name)}</b><small>${escapeHtml(place.category || "Place")}</small></span>
+          </button>
+          <button class="favorite-delete" data-delete-place="${escapeHtml(place.id)}" title="Delete">×</button>
+        </div>`).join("")
+    : `<div class="empty-state">No frequent places yet.</div>`;
+
+  const sortedRoutes = favoriteRoutes.slice().sort((a, b) => Number(b.useCount || 0) - Number(a.useCount || 0) || a.name.localeCompare(b.name));
+  routesNode.innerHTML = sortedRoutes.length
+    ? sortedRoutes.map(route => `
+        <div class="favorite-row">
+          <button class="favorite-main" data-open-route="${escapeHtml(route.id)}">
+            <span class="favorite-symbol route-star">★</span>
+            <span><b>${escapeHtml(route.name)}</b><small>${escapeHtml(routeSegmentSummary(route))} · Used ${Number(route.useCount || 0)}×</small></span>
+          </button>
+          <button class="favorite-delete" data-delete-route="${escapeHtml(route.id)}" title="Delete">×</button>
+        </div>`).join("")
+    : `<div class="empty-state">No favorite routes yet.</div>`;
+
+  placesNode.querySelectorAll("[data-open-place]").forEach(button => {
+    button.addEventListener("click", () => {
+      const place = frequentPlaces.find(item => item.id === button.dataset.openPlace);
+      if (!place) return;
+      closeFavoritesSheet(false);
+      layerState.places = true;
+      applyLayerState();
+      map.panTo({ lat: place.lat, lng: place.lng });
+      if ((map.getZoom() || 0) < 16) map.setZoom(16);
+      showPlaceInfo(place);
+    });
+  });
+  placesNode.querySelectorAll("[data-delete-place]").forEach(button => button.addEventListener("click", () => deleteFrequentPlace(button.dataset.deletePlace)));
+  routesNode.querySelectorAll("[data-open-route]").forEach(button => button.addEventListener("click", () => { closeFavoritesSheet(false); activateFavoriteRoute(button.dataset.openRoute); }));
+  routesNode.querySelectorAll("[data-delete-route]").forEach(button => button.addEventListener("click", () => deleteFavoriteRoute(button.dataset.deleteRoute)));
+}
+
+function allOtherSheetsClosed(exceptId) {
+  const ids = ["detail-card", "add-sheet", "favorites-sheet", "route-editor-sheet", "place-editor-sheet", "location-search-sheet"];
+  return ids.filter(id => id !== exceptId).every(id => el(id)?.classList.contains("hidden"));
+}
+
 
 /* ---------- Utilities ---------- */
 function getCache(key) {
@@ -1599,6 +2165,27 @@ el("traffic-btn").addEventListener("click", () => {
 
 el("info-btn").addEventListener("click", showMapInfo);
 el("detail-close").addEventListener("click", closeDetail);
+
+el("favorites-btn").addEventListener("click", openFavoritesSheet);
+el("favorites-close").addEventListener("click", () => closeFavoritesSheet());
+
+el("route-focus-chip").addEventListener("click", () => {
+  const route = getActiveFavoriteRoute();
+  if (route) showFavoriteRouteInfo(route);
+});
+
+el("save-place-btn").addEventListener("click", savePlaceFromEditor);
+el("place-editor-close").addEventListener("click", () => closePlaceEditor());
+
+el("location-search-close").addEventListener("click", () => closeLocationSearchSheet());
+el("location-search-btn").addEventListener("click", geocodeLocationForPlace);
+el("location-search-input").addEventListener("keydown", event => {
+  if (event.key === "Enter") geocodeLocationForPlace();
+});
+
+el("route-editor-close").addEventListener("click", () => closeRouteEditor());
+el("add-route-segment-btn").addEventListener("click", addRouteEditorSegment);
+el("save-route-btn").addEventListener("click", saveFavoriteRouteFromEditor);
 
 el("add-btn").addEventListener("click", openAddSheet);
 el("add-close").addEventListener("click", () => closeAddSheet());

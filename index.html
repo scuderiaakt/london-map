@@ -10,7 +10,7 @@
   <title>London Life Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.3b" />
+  <link rel="stylesheet" href="styles.css?v=1.3c" />
 </head>
 <body>
   <main id="app">
@@ -36,16 +36,20 @@
         <button id="metro-btn" class="layer-chip" aria-pressed="false">
           <span class="layer-dot metro-dot"></span>Metro
         </button>
-        <button id="rail-btn" class="layer-chip coming" aria-pressed="false" title="Rail network will be added in the next build">
+        <button id="rail-btn" class="layer-chip coming" aria-pressed="false" title="Rail network will be added in a later build">
           <span class="layer-dot rail-dot"></span>Rail
         </button>
         <button id="places-btn" class="layer-chip" aria-pressed="false">
           <span class="layer-dot places-dot"></span>Places
         </button>
       </div>
+      <button id="route-focus-chip" class="route-focus-chip glass hidden" aria-label="Open active favorite route">
+        ★ <span data-route-focus-name></span>
+      </button>
     </section>
 
     <div class="corner-actions">
+      <button id="favorites-btn" class="floating-icon glass" aria-label="Favorites" title="Favorites">★</button>
       <button id="info-btn" class="floating-icon glass" aria-label="Map information" title="Information">ⓘ</button>
       <button id="settings-btn" class="floating-icon glass" aria-label="Settings" title="Settings">⚙</button>
     </div>
@@ -74,15 +78,74 @@
       <div class="sheet-handle" aria-hidden="true"></div>
       <button id="add-close" class="detail-close" aria-label="Close">×</button>
       <div class="detail-label">ADD TO MAP</div>
-      <h2>Add a frequent place</h2>
-      <div class="sub">Frequent-place saving comes in the Places build. Metro v1.3B is focused on the network itself.</div>
+      <h2>Add something</h2>
+      <div class="sub">Frequent places are saved on this device. Favorite routes can already combine Metro, Rail, Tram, Bus and walking segments.</div>
       <div class="add-options">
-        <button class="add-option" data-add-method="search"><span>⌕</span><b>Search location</b><small>Choose a place by name</small></button>
+        <button class="add-option route-add-option" data-add-method="route"><span>★</span><b>Create favorite route</b><small>Build a reusable multi-mode route</small></button>
+        <button class="add-option" data-add-method="search"><span>⌕</span><b>Search location</b><small>Find a place or address in London</small></button>
         <button class="add-option" data-add-method="tap"><span>⌖</span><b>Tap map</b><small>Pick an exact point</small></button>
         <button class="add-option" data-add-method="current"><span>◎</span><b>Use current location</b><small>Use your device position</small></button>
         <button class="add-option" data-add-method="centre"><span>＋</span><b>Use map centre</b><small>Use the point currently in view</small></button>
       </div>
-      <div class="detail-section muted-future">Later: quick routes and special markers.</div>
+    </section>
+
+    <section id="favorites-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Favorites">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="favorites-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">FAVORITES</div>
+      <h2>Your London</h2>
+      <div class="favorites-section">
+        <div class="favorites-heading"><span>Frequent Places</span><small>Saved on this device</small></div>
+        <div id="favorite-places-list" class="favorites-list"></div>
+      </div>
+      <div class="favorites-section">
+        <div class="favorites-heading"><span>Favorite Routes</span><small>Most used first</small></div>
+        <div id="favorite-routes-list" class="favorites-list"></div>
+      </div>
+    </section>
+
+    <section id="place-editor-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Save frequent place">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="place-editor-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">FREQUENT PLACE</div>
+      <h2>Save this place</h2>
+      <label class="field-label" for="place-name-input">Name</label>
+      <input id="place-name-input" class="form-control" type="text" placeholder="e.g. Imperial College London" />
+      <label class="field-label" for="place-category-input">Category</label>
+      <select id="place-category-input" class="form-control">
+        <option>Home</option><option>University</option><option>Health</option><option>Food</option><option>Shopping</option><option>Sports</option><option>Tech</option><option>Transport</option><option>Social</option><option selected>Other</option>
+      </select>
+      <label class="field-label" for="place-note-input">Note</label>
+      <input id="place-note-input" class="form-control" type="text" placeholder="Optional note" />
+      <div class="coordinate-readout">Location: <span id="place-coordinate-readout"></span></div>
+      <button id="save-place-btn" class="primary-btn full-btn">Save frequent place</button>
+    </section>
+
+    <section id="location-search-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Search location">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="location-search-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">SEARCH LOCATION</div>
+      <h2>Find a place in London</h2>
+      <div class="inline-search">
+        <input id="location-search-input" class="form-control" type="search" placeholder="Place name or address" />
+        <button id="location-search-btn" class="primary-btn">Search</button>
+      </div>
+      <div id="location-search-status" class="sub detail-section">Search London by place name or address.</div>
+      <div class="fineprint detail-section">This search uses Google's Geocoding service. If your project has only Maps JavaScript API enabled, the other add methods still work without it.</div>
+    </section>
+
+    <section id="route-editor-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Create favorite route">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="route-editor-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">FAVORITE ROUTE</div>
+      <h2>Create a route</h2>
+      <label class="field-label" for="route-name-input">Route name</label>
+      <input id="route-name-input" class="form-control" type="text" placeholder="e.g. Eastside → Heathrow" />
+      <div class="favorites-heading route-builder-heading"><span>Segments</span><small>Put them in travel order</small></div>
+      <div id="route-segments" class="route-segments"></div>
+      <button id="add-route-segment-btn" class="secondary-btn compact-btn">＋ Add segment</button>
+      <button id="save-route-btn" class="primary-btn full-btn">Save favorite route</button>
+      <div class="fineprint detail-section">Metro segments can be isolated on the map now. Rail, Tram and Bus segments are saved and will become map-visible as those layers are added later.</div>
     </section>
 
     <section id="key-modal" class="modal">
@@ -133,6 +196,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.3b"></script>
+  <script src="app.js?v=1.3c"></script>
 </body>
 </html>
