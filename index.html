@@ -10,62 +10,96 @@
   <title>London Life Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=1.3a" />
 </head>
 <body>
   <main id="app">
-    <div id="map"></div>
+    <div id="map" aria-label="Interactive London map"></div>
 
-    <header class="topbar glass">
-      <div class="brand">
-        <div class="brand-dot"></div>
-        <div>
-          <strong>London Life Map</strong>
-          <span id="network-status">Loading Tube network…</span>
-        </div>
+    <section class="search-panel" aria-label="Search and layers">
+      <div class="search-box glass">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input
+          id="search-input"
+          type="search"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="Search stations, lines, places…"
+          aria-label="Search stations, lines and places"
+        />
+        <button id="search-clear" class="search-clear hidden" aria-label="Clear search">×</button>
+        <div id="search-results" class="search-results hidden" role="listbox"></div>
       </div>
-      <button id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings">⚙</button>
-    </header>
 
-    <section class="map-controls glass" aria-label="Map controls">
-      <div class="segmented">
-        <button id="roadmap-btn" class="control-btn active">Map</button>
-        <button id="satellite-btn" class="control-btn">Satellite</button>
+      <div class="layer-bar glass" aria-label="Map layers">
+        <button id="metro-btn" class="layer-chip" aria-pressed="false">
+          <span class="layer-dot metro-dot"></span>Metro
+        </button>
+        <button id="rail-btn" class="layer-chip coming" aria-pressed="false" title="Rail network will be added in the next build">
+          <span class="layer-dot rail-dot"></span>Rail
+        </button>
+        <button id="places-btn" class="layer-chip" aria-pressed="false">
+          <span class="layer-dot places-dot"></span>Places
+        </button>
       </div>
-      <button id="traffic-btn" class="control-btn">Traffic</button>
-      <button id="underground-btn" class="control-btn underground-toggle">
-        <span class="tube-symbol">◎</span> Underground
-      </button>
     </section>
 
-    <aside id="line-legend" class="line-legend glass hidden" aria-label="Tube line legend"></aside>
+    <div class="corner-actions">
+      <button id="info-btn" class="floating-icon glass" aria-label="Map information" title="Information">ⓘ</button>
+      <button id="settings-btn" class="floating-icon glass" aria-label="Settings" title="Settings">⚙</button>
+    </div>
 
-    <section id="detail-card" class="detail-card glass hidden" aria-live="polite">
+    <section class="base-controls glass" aria-label="Base map controls">
+      <button id="roadmap-btn" class="base-control active">Map</button>
+      <button id="satellite-btn" class="base-control">Satellite</button>
+      <button id="traffic-btn" class="base-control">Traffic</button>
+    </section>
+
+    <div class="right-actions" aria-label="Location and add controls">
+      <button id="location-btn" class="round-action glass" aria-label="Use my location" title="Use my location">◎</button>
+      <button id="add-btn" class="round-action add-action" aria-label="Add to map" title="Add to map">＋</button>
+    </div>
+
+    <div id="network-status" class="network-status glass">Loading Tube network…</div>
+    <div class="attribution glass">Data provided by Transport for London</div>
+
+    <section id="detail-card" class="detail-card glass hidden" aria-live="polite" aria-label="Map information">
+      <div class="sheet-handle" aria-hidden="true"></div>
       <button id="detail-close" class="detail-close" aria-label="Close">×</button>
       <div id="detail-content"></div>
     </section>
 
-    <div class="attribution glass">Data provided by Transport for London</div>
+    <section id="add-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Add to map">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="add-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">ADD TO MAP</div>
+      <h2>Add a frequent place</h2>
+      <div class="sub">The interface is ready in v1.3A. Saving new places comes in the Places build.</div>
+      <div class="add-options">
+        <button class="add-option" data-add-method="search"><span>⌕</span><b>Search location</b><small>Choose a place by name</small></button>
+        <button class="add-option" data-add-method="tap"><span>⌖</span><b>Tap map</b><small>Pick an exact point</small></button>
+        <button class="add-option" data-add-method="current"><span>◎</span><b>Use current location</b><small>Use your device position</small></button>
+        <button class="add-option" data-add-method="centre"><span>＋</span><b>Use map centre</b><small>Use the point currently in view</small></button>
+      </div>
+      <div class="detail-section muted-future">Later: quick routes and special markers.</div>
+    </section>
 
     <section id="key-modal" class="modal">
       <div class="modal-card">
         <div class="modal-kicker">GOOGLE MAPS SETUP</div>
         <h1>Connect Google Maps</h1>
         <p>
-          This map uses Google Maps for the dark basemap, satellite imagery, high-resolution zoom,
-          and live traffic. Paste your Maps JavaScript API key below. It is stored only in this browser.
+          This map uses Google Maps for the basemap, satellite imagery, high-resolution zoom and live traffic.
+          Paste your Maps JavaScript API key below. It is stored only in this browser.
         </p>
         <label for="api-key-input">Google Maps JavaScript API key</label>
         <input id="api-key-input" type="password" autocomplete="off" placeholder="AIza…" />
         <div class="modal-actions">
           <button id="save-key-btn" class="primary-btn">Open map</button>
-          <a class="text-link" href="https://developers.google.com/maps/documentation/javascript/get-api-key" target="_blank" rel="noreferrer">
-            Get a key
-          </a>
+          <a class="text-link" href="https://developers.google.com/maps/documentation/javascript/get-api-key" target="_blank" rel="noreferrer">Get a key</a>
         </div>
-        <p class="fineprint">
-          For a phone-friendly hosted version, restrict the key to the website domain after deployment.
-        </p>
+        <p class="fineprint">Keep the key restricted to your GitHub Pages domain and localhost.</p>
       </div>
     </section>
 
@@ -79,11 +113,12 @@
         <p class="fineprint">Tube geometry is cached on your device for 24 hours to make mobile loading faster.</p>
       </div>
     </section>
+
+    <div id="toast" class="toast glass hidden" role="status" aria-live="polite"></div>
   </main>
 
-
   <script>
-    // Development mode: prevent an old service worker from serving stale JavaScript.
+    // Development: prevent old localhost service workers from serving stale JavaScript.
     if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.getRegistrations()
@@ -98,6 +133,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.2.0"></script>
+  <script src="app.js?v=1.3a"></script>
 </body>
 </html>

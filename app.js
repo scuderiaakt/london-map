@@ -1,28 +1,32 @@
-
-/* London Life Map
-   Google Maps basemap + live TfL Tube geometry.
+/* London Life Map v1.3A
+   Google Maps basemap + TfL Tube geometry.
+   v1.3A adds: layer architecture, Metro focus/minimal modes,
+   phone-first controls, local search, information panel and live location.
    Data attribution: Transport for London.
 */
 
 const GOOGLE_KEY_STORAGE = "london_map_google_key";
 const TFL_CACHE_PREFIX = "london_tube_cache_v3_";
 const TFL_CACHE_TTL = 24 * 60 * 60 * 1000;
-
 const LONDON_CENTER = { lat: 51.5078, lng: -0.1277 };
 
+/* Our learning aliases. Official TfL names and colours remain unchanged. */
 const TUBE_LINES = [
-  { id: "bakerloo", name: "Bakerloo", color: "#B36305" },
-  { id: "central", name: "Central", color: "#E32017" },
-  { id: "circle", name: "Circle", color: "#FFD300" },
-  { id: "district", name: "District", color: "#00782A" },
-  { id: "hammersmith-city", name: "Hammersmith & City", color: "#F3A9BB" },
-  { id: "jubilee", name: "Jubilee", color: "#A0A5A9" },
-  { id: "metropolitan", name: "Metropolitan", color: "#9B0056" },
-  { id: "northern", name: "Northern", color: "#111111" },
-  { id: "piccadilly", name: "Piccadilly", color: "#003688" },
-  { id: "victoria", name: "Victoria", color: "#0098D4" },
-  { id: "waterloo-city", name: "Waterloo & City", color: "#95CDBA" }
+  { id: "piccadilly", name: "Piccadilly", code: "M1", color: "#003688" },
+  { id: "district", name: "District", code: "M2", color: "#00782A" },
+  { id: "circle", name: "Circle", code: "M3", color: "#FFD300" },
+  { id: "central", name: "Central", code: "M4", color: "#E32017" },
+  { id: "jubilee", name: "Jubilee", code: "M5", color: "#A0A5A9" },
+  { id: "northern", name: "Northern", code: "M6", color: "#111111" },
+  { id: "victoria", name: "Victoria", code: "M7", color: "#0098D4" },
+  { id: "bakerloo", name: "Bakerloo", code: "M8", color: "#B36305" },
+  { id: "metropolitan", name: "Metropolitan", code: "M9", color: "#9B0056" },
+  { id: "hammersmith-city", name: "Hammersmith & City", code: "M10", color: "#F3A9BB" },
+  { id: "waterloo-city", name: "Waterloo & City", code: "M11", color: "#95CDBA" }
 ];
+
+const TUBE_LINE_BY_ID = new Map(TUBE_LINES.map(line => [line.id, line]));
+const TUBE_LINE_ORDER = new Map(TUBE_LINES.map((line, index) => [line.id, index]));
 
 const PLACES = [
   { name: "Eastside Halls", lat: 51.49855, lng: -0.17435, category: "Home", color: "#64A8FF", anchor: true, note: "Home base — Prince's Gardens." },
@@ -42,20 +46,36 @@ const PLACES = [
 
 let map;
 let trafficLayer;
-let undergroundMode = false;
 let activeMapType = "roadmap";
-let linePolylines = [];
+
+const layerState = {
+  metro: false,
+  rail: false,
+  places: false
+};
+
+let lineRenderings = [];
 let stationOverlays = [];
 let lineLabelOverlays = [];
 let placeOverlays = [];
 let stationRegistry = new Map();
+let lineGeometryRegistry = new Map();
 
-const el = (id) => document.getElementById(id);
+let userLocationMarker = null;
+let userAccuracyCircle = null;
+let userLocationWatchId = null;
+let lastUserPosition = null;
+let followUserLocation = false;
+
+let toastTimer = null;
+
+const el = id => document.getElementById(id);
 
 function setNetworkStatus(text, isError = false) {
   const node = el("network-status");
   node.textContent = text;
   node.classList.toggle("error-badge", isError);
+  node.classList.toggle("ready", !isError && /ready|loaded/i.test(text));
 }
 
 function showModal(id) {
@@ -64,6 +84,14 @@ function showModal(id) {
 
 function hideModal(id) {
   el(id).classList.add("hidden");
+}
+
+function showToast(message, duration = 2300) {
+  const node = el("toast");
+  node.textContent = message;
+  node.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => node.classList.add("hidden"), duration);
 }
 
 function loadGoogleMaps(apiKey) {
@@ -79,7 +107,9 @@ function loadGoogleMaps(apiKey) {
     document.head.appendChild(script);
 
     setTimeout(() => {
-      if (!window.google?.maps) reject(new Error("Google Maps did not initialize. Check the API key and Maps JavaScript API setup."));
+      if (!window.google?.maps) {
+        reject(new Error("Google Maps did not initialize. Check the API key and Maps JavaScript API setup."));
+      }
     }, 15000);
   });
 }
@@ -110,7 +140,7 @@ function initMap() {
     clickableIcons: false,
     gestureHandling: "greedy",
     fullscreenControl: false,
-    streetViewControl: true,
+    streetViewControl: false,
     mapTypeControl: false,
     rotateControl: false,
     scaleControl: true,
@@ -121,12 +151,25 @@ function initMap() {
 
   trafficLayer = new google.maps.TrafficLayer();
   createPlaceMarkers();
-  buildLegend();
   loadTubeNetwork();
+  applyLayerState();
 
-  map.addListener("click", () => closeDetail());
+  map.addListener("click", () => {
+    closeDetail();
+    closeAddSheet();
+    hideSearchResults();
+  });
+
+  map.addListener("dragstart", () => {
+    if (userLocationWatchId !== null) {
+      followUserLocation = false;
+      updateLocationButton();
+    }
+  });
+
   map.addListener("maptypeid_changed", () => {
     activeMapType = map.getMapTypeId();
+    applyBaseMapStyle();
   });
 
   setNetworkStatus("Loading Tube network…");
@@ -172,7 +215,7 @@ function initOverlayClasses() {
       this.visible = visible;
       if (this.div) this.div.style.display = visible ? "" : "none";
     }
-  }
+  };
 
   PlaceOverlay = class PlaceOverlay extends HtmlOverlay {
     constructor(place) {
@@ -186,12 +229,13 @@ function initOverlayClasses() {
         <div class="place-pin" style="background:${this.place.color}"></div>
         ${this.place.anchor ? `<div class="place-label">${escapeHtml(this.place.name)}</div>` : ""}
       `;
-      this.div.addEventListener("click", (event) => {
+      this.div.title = this.place.name;
+      this.div.addEventListener("click", event => {
         event.stopPropagation();
         showPlaceInfo(this.place);
       });
     }
-  }
+  };
 
   StationNodeOverlay = class StationNodeOverlay extends HtmlOverlay {
     constructor(station, line, index, total) {
@@ -200,17 +244,29 @@ function initOverlayClasses() {
       this.line = line;
       this.index = index;
       this.total = total;
+      this.mode = "focus";
     }
 
     onAdd() {
       super.onAdd();
       this.div.style.background = this.line.color;
       if (this.total > 1) this.div.classList.add("interchange");
-      this.div.title = `${this.station.name} — ${this.line.name}`;
-      this.div.addEventListener("click", (event) => {
+      this.div.title = `${this.station.name} — ${formatLineName(this.line)}`;
+      this.div.addEventListener("click", event => {
         event.stopPropagation();
         showStationInfo(this.station);
       });
+      this.applyMode();
+    }
+
+    setMode(mode) {
+      this.mode = mode;
+      this.applyMode();
+    }
+
+    applyMode() {
+      if (!this.div) return;
+      this.div.classList.toggle("metro-minimal", this.mode === "minimal");
     }
 
     draw() {
@@ -228,20 +284,32 @@ function initOverlayClasses() {
       this.div.style.transform = "translate(-50%, -50%)";
       this.div.style.display = this.visible ? "" : "none";
     }
-  }
+  };
 
   LineLabelOverlay = class LineLabelOverlay extends HtmlOverlay {
     constructor(position, line) {
       super(position, "line-map-label");
       this.line = line;
+      this.mode = "focus";
     }
 
     onAdd() {
       super.onAdd();
-      this.div.textContent = this.line.name;
+      this.div.textContent = this.line.code;
       this.div.style.background = this.line.color;
       this.div.style.color = idealTextColor(this.line.color);
       if (this.line.id === "northern") this.div.style.borderColor = "#fff";
+      this.applyMode();
+    }
+
+    setMode(mode) {
+      this.mode = mode;
+      this.applyMode();
+    }
+
+    applyMode() {
+      if (!this.div) return;
+      this.div.classList.toggle("metro-minimal", this.mode === "minimal");
     }
 
     draw() {
@@ -254,46 +322,36 @@ function initOverlayClasses() {
       this.div.style.transform = "translate(-50%, -50%)";
       this.div.style.display = this.visible ? "" : "none";
     }
-  }
-
+  };
 }
 
 function createPlaceMarkers() {
-  placeOverlays.forEach(o => o.setMap(null));
+  placeOverlays.forEach(overlay => overlay.setMap(null));
   placeOverlays = PLACES.map(place => {
     const overlay = new PlaceOverlay(place);
     overlay.setMap(map);
+    overlay.setVisible(layerState.places);
     return overlay;
   });
-}
-
-function buildLegend() {
-  const legend = el("line-legend");
-  legend.innerHTML = `<div class="legend-title">UNDERGROUND LINES</div>` +
-    TUBE_LINES.map(line => `
-      <div class="legend-row">
-        <span class="legend-line" style="background:${line.color}; ${line.id === "northern" ? "border:1px solid #fff;" : ""}"></span>
-        <span>${escapeHtml(line.name)}</span>
-      </div>
-    `).join("");
 }
 
 async function loadTubeNetwork(force = false) {
   clearTubeNetwork();
   stationRegistry = new Map();
+  lineGeometryRegistry = new Map();
   setNetworkStatus("Loading Tube geometry…");
 
   const results = await Promise.allSettled(
     TUBE_LINES.map(line => loadLine(line, force))
   );
 
-  const good = results.filter(r => r.status === "fulfilled").map(r => r.value);
+  const good = results.filter(result => result.status === "fulfilled").map(result => result.value);
   const bad = results.length - good.length;
 
   good.forEach(data => ingestLineData(data));
   buildStationNodes();
-
-  setUndergroundVisibility(undergroundMode);
+  applyLayerState();
+  refreshSearchIfOpen();
 
   if (!good.length) {
     setNetworkStatus("Tube data unavailable — tap ⚙ to retry", true);
@@ -315,8 +373,8 @@ async function loadLine(line, force = false) {
   const stopsUrl = `https://api.tfl.gov.uk/Line/${encodeURIComponent(line.id)}/StopPoints`;
 
   const [sequenceRes, stopsRes] = await Promise.all([
-    fetch(seqUrl, { headers: { "Accept": "application/json" } }),
-    fetch(stopsUrl, { headers: { "Accept": "application/json" } })
+    fetch(seqUrl, { headers: { Accept: "application/json" } }),
+    fetch(stopsUrl, { headers: { Accept: "application/json" } })
   ]);
 
   if (!sequenceRes.ok || !stopsRes.ok) {
@@ -339,8 +397,8 @@ async function loadLine(line, force = false) {
       lat: stop.lat,
       lon: stop.lon,
       modes: stop.modes || [],
-      lines: (stop.lines || []).map(l => ({ id: l.id, name: l.name }))
-    })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lon))
+      lines: (stop.lines || []).map(item => ({ id: item.id, name: item.name }))
+    })).filter(stop => Number.isFinite(stop.lat) && Number.isFinite(stop.lon))
   };
 
   setCache(cacheKey, simplified);
@@ -359,6 +417,7 @@ function parseLineString(encoded) {
 
   function walk(node) {
     if (!Array.isArray(node) || !node.length) return;
+
     const looksLikePath =
       Array.isArray(node[0]) &&
       node[0].length >= 2 &&
@@ -366,8 +425,9 @@ function parseLineString(encoded) {
       typeof node[0][1] === "number";
 
     if (looksLikePath) {
-      const path = node.map(pair => ({ lat: pair[1], lng: pair[0] }))
-        .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+      const path = node
+        .map(pair => ({ lat: pair[1], lng: pair[0] }))
+        .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng));
       if (path.length >= 2) lines.push(path);
     } else {
       node.forEach(walk);
@@ -380,37 +440,39 @@ function parseLineString(encoded) {
 
 function ingestLineData(data) {
   const { line, geometries, stops } = data;
+  lineGeometryRegistry.set(line.id, geometries);
 
   let longestPath = null;
+
   for (const path of geometries) {
+    if (line.id === "northern") {
+      const casing = new google.maps.Polyline({
+        map,
+        path,
+        geodesic: false,
+        strokeColor: "#FFFFFF",
+        strokeOpacity: 0,
+        strokeWeight: 8,
+        zIndex: 17,
+        clickable: false,
+        visible: layerState.metro
+      });
+      lineRenderings.push({ polyline: casing, line, role: "casing" });
+    }
+
     const polyline = new google.maps.Polyline({
       map,
       path,
       geodesic: false,
       strokeColor: line.color,
-      strokeOpacity: 0.95,
-      strokeWeight: line.id === "northern" ? 6 : 5,
-      zIndex: line.id === "northern" ? 18 : 20,
+      strokeOpacity: 0,
+      strokeWeight: 5,
+      zIndex: 20,
       clickable: false,
-      visible: undergroundMode
+      visible: layerState.metro
     });
 
-    // White casing keeps the Northern line visible on the dark basemap.
-    if (line.id === "northern") {
-      const casing = new google.maps.Polyline({
-        map,
-        path,
-        strokeColor: "#FFFFFF",
-        strokeOpacity: 0.90,
-        strokeWeight: 9,
-        zIndex: 17,
-        clickable: false,
-        visible: undergroundMode
-      });
-      linePolylines.push(casing);
-    }
-
-    linePolylines.push(polyline);
+    lineRenderings.push({ polyline, line, role: "main" });
     if (!longestPath || path.length > longestPath.length) longestPath = path;
   }
 
@@ -418,7 +480,7 @@ function ingestLineData(data) {
     const labelPos = longestPath[Math.floor(longestPath.length * 0.52)];
     const label = new LineLabelOverlay(labelPos, line);
     label.setMap(map);
-    label.setVisible(undergroundMode);
+    label.setVisible(layerState.metro);
     lineLabelOverlays.push(label);
   }
 
@@ -433,64 +495,161 @@ function ingestLineData(data) {
       lines: []
     };
 
-    if (!existing.lines.some(l => l.id === line.id)) existing.lines.push(line);
-    (stop.modes || []).forEach(m => existing.modes.add(m));
+    addStationLine(existing, line);
+
+    for (const listedLine of (stop.lines || [])) {
+      const knownLine = TUBE_LINE_BY_ID.get(listedLine.id);
+      if (knownLine) addStationLine(existing, knownLine);
+    }
+
+    (stop.modes || []).forEach(mode => existing.modes.add(mode));
     stationRegistry.set(key, existing);
   }
 }
 
+function addStationLine(station, line) {
+  if (!station.lines.some(existing => existing.id === line.id)) {
+    station.lines.push(line);
+  }
+}
+
 function buildStationNodes() {
-  stationOverlays.forEach(o => o.setMap(null));
+  stationOverlays.forEach(overlay => overlay.setMap(null));
   stationOverlays = [];
 
   for (const station of stationRegistry.values()) {
-    const lines = station.lines.sort((a, b) => a.name.localeCompare(b.name));
+    const lines = station.lines.slice().sort(compareTubeLines);
     lines.forEach((line, index) => {
       const overlay = new StationNodeOverlay(station, line, index, lines.length);
       overlay.setMap(map);
-      overlay.setVisible(undergroundMode);
+      overlay.setVisible(layerState.metro);
       stationOverlays.push(overlay);
     });
   }
 }
 
 function clearTubeNetwork() {
-  linePolylines.forEach(p => p.setMap(null));
-  stationOverlays.forEach(o => o.setMap(null));
-  lineLabelOverlays.forEach(o => o.setMap(null));
-  linePolylines = [];
+  lineRenderings.forEach(item => item.polyline.setMap(null));
+  stationOverlays.forEach(overlay => overlay.setMap(null));
+  lineLabelOverlays.forEach(overlay => overlay.setMap(null));
+  lineRenderings = [];
   stationOverlays = [];
   lineLabelOverlays = [];
 }
 
-function setUndergroundVisibility(visible) {
-  undergroundMode = visible;
-  linePolylines.forEach(p => p.setVisible(visible));
-  stationOverlays.forEach(o => o.setVisible(visible));
-  lineLabelOverlays.forEach(o => o.setVisible(visible));
-  el("line-legend").classList.toggle("hidden", !visible);
-  el("underground-btn").classList.toggle("active", visible);
+/* ---------- Layer architecture ---------- */
+function toggleLayer(name) {
+  layerState[name] = !layerState[name];
+  applyLayerState();
 
-  if (activeMapType === "roadmap") {
-    map.setOptions({
-      styles: visible ? UNDERGROUND_MAP_STYLES : []
-    });
+  if (name === "rail" && layerState.rail) {
+    showToast("Rail controls are ready; Elizabeth, Overground, DLR and National Rail data come in the Rail build.", 3400);
   }
 }
 
-const UNDERGROUND_MAP_STYLES = [
-  { elementType: "geometry", stylers: [{ color: "#0f151d" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#687789" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#0f151d" }] },
-  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#29323d" }] },
-  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#10171f" }] },
+function applyLayerState() {
+  const metroVisible = layerState.metro;
+  const metroFocus = metroVisible && !layerState.rail && !layerState.places;
+  const metroMode = metroFocus ? "focus" : "minimal";
+
+  lineRenderings.forEach(item => {
+    const { polyline, line, role } = item;
+    polyline.setVisible(metroVisible);
+
+    if (!metroVisible) return;
+
+    if (role === "casing") {
+      polyline.setOptions({
+        strokeOpacity: metroFocus ? 0.90 : 0.43,
+        strokeWeight: metroFocus ? 9 : 5.4,
+        zIndex: metroFocus ? 17 : 12
+      });
+      return;
+    }
+
+    polyline.setOptions({
+      strokeOpacity: metroFocus ? 0.97 : 0.56,
+      strokeWeight: metroFocus ? (line.id === "northern" ? 6 : 5) : 3.2,
+      zIndex: metroFocus ? 20 : 13
+    });
+  });
+
+  stationOverlays.forEach(overlay => {
+    overlay.setVisible(metroVisible);
+    overlay.setMode(metroMode);
+  });
+
+  lineLabelOverlays.forEach(overlay => {
+    overlay.setVisible(metroVisible);
+    overlay.setMode(metroMode);
+  });
+
+  placeOverlays.forEach(overlay => overlay.setVisible(layerState.places));
+
+  el("metro-btn").classList.toggle("active", layerState.metro);
+  el("metro-btn").setAttribute("aria-pressed", String(layerState.metro));
+  el("rail-btn").classList.toggle("active", layerState.rail);
+  el("rail-btn").setAttribute("aria-pressed", String(layerState.rail));
+  el("places-btn").classList.toggle("active", layerState.places);
+  el("places-btn").setAttribute("aria-pressed", String(layerState.places));
+
+  applyBaseMapStyle();
+}
+
+function applyBaseMapStyle() {
+  if (!map || activeMapType !== "roadmap") return;
+  const metroFocus = layerState.metro && !layerState.rail && !layerState.places;
+  map.setOptions({ styles: metroFocus ? METRO_FOCUS_MAP_STYLES : [] });
+}
+
+const METRO_FOCUS_MAP_STYLES = [
+  { elementType: "geometry", stylers: [{ color: "#0c1117" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#4e5a67" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#0c1117" }] },
+  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#242d37" }] },
+  { featureType: "administrative.locality", elementType: "labels", stylers: [{ visibility: "simplified" }] },
+  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#0e151c" }] },
   { featureType: "poi", stylers: [{ visibility: "off" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#1d2631" }] },
-  { featureType: "road", elementType: "labels", stylers: [{ visibility: "simplified" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#26313e" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#171f28" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#46525f" }] },
+  { featureType: "road", elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#202a35" }] },
   { featureType: "transit", stylers: [{ visibility: "off" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#071927" }] }
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#071925" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#395164" }] }
 ];
+
+/* ---------- Information ---------- */
+function showMapInfo() {
+  const activeLayers = [];
+  if (layerState.metro) activeLayers.push("Metro");
+  if (layerState.rail) activeLayers.push("Rail");
+  if (layerState.places) activeLayers.push("Frequent Places");
+
+  const metroFocus = layerState.metro && !layerState.rail && !layerState.places;
+  const viewName = !activeLayers.length ? "Vanilla Map" : metroFocus ? "Metro Focus" : activeLayers.join(" + ");
+
+  const content = el("detail-content");
+  content.innerHTML = `
+    <div class="detail-label">CURRENT VIEW</div>
+    <h2>${escapeHtml(viewName)}</h2>
+    <div class="sub">
+      ${metroFocus
+        ? "Metro is the only active layer, so the city is dimmed and the Tube becomes the visual focus."
+        : !activeLayers.length
+          ? "No custom layers are active. This is the clean Google Maps base map."
+          : "The base city stays normal while active layers are drawn as overlays."}
+    </div>
+    <div class="detail-section">
+      <div class="info-row"><span>Metro</span><b>${layerState.metro ? (metroFocus ? "Focus" : "Minimal overlay") : "Off"}</b></div>
+      <div class="info-row"><span>Rail</span><b>${layerState.rail ? "Selected · data next" : "Off"}</b></div>
+      <div class="info-row"><span>Frequent Places</span><b>${layerState.places ? "On" : "Off"}</b></div>
+      <div class="info-row"><span>Base map</span><b>${activeMapType === "satellite" ? "Satellite" : "Map"}</b></div>
+    </div>
+    <div class="detail-section sub">M1–M11 are learning aliases used by this map. Official TfL line names and colours stay unchanged.</div>
+  `;
+  openDetail();
+}
 
 function showPlaceInfo(place) {
   const content = el("detail-content");
@@ -502,14 +661,34 @@ function showPlaceInfo(place) {
   openDetail();
 }
 
+function showLineInfo(line) {
+  const content = el("detail-content");
+  content.innerHTML = `
+    <div class="detail-label">METRO LINE</div>
+    <h2>${escapeHtml(formatLineName(line))}</h2>
+    <div class="sub">London Underground · official TfL colour retained.</div>
+    <div class="detail-section">
+      <div class="info-row"><span>Learning alias</span><b>${escapeHtml(line.code)}</b></div>
+      <div class="info-row"><span>Official name</span><b>${escapeHtml(line.name)}</b></div>
+    </div>
+  `;
+  openDetail();
+}
+
 async function showStationInfo(station) {
   const content = el("detail-content");
-  const lines = station.lines || [];
+  const lines = (station.lines || []).slice().sort(compareTubeLines);
+  const transferLabel = lines.length > 1 ? "TRANSFER STATION" : "METRO STATION";
+
   content.innerHTML = `
-    <div class="detail-label">UNDERGROUND STATION</div>
+    <div class="detail-label">${transferLabel}</div>
     <h2>${escapeHtml(station.name)}</h2>
     <div class="chips">
-      ${lines.map(line => `<span class="line-chip" style="background:${line.color};color:${idealTextColor(line.color)}">${escapeHtml(line.name)}</span>`).join("")}
+      ${lines.map(line => `
+        <span class="line-chip" style="background:${line.color};color:${idealTextColor(line.color)}">
+          ${escapeHtml(formatLineName(line))}
+        </span>
+      `).join("")}
     </div>
     <div class="detail-section">
       <div class="detail-label">BUS INTEGRATION</div>
@@ -558,15 +737,353 @@ async function fetchNearbyBusStops(lat, lon) {
 }
 
 function openDetail() {
+  closeAddSheet(false);
   el("detail-card").classList.remove("hidden");
   document.body.classList.add("detail-open");
 }
 
 function closeDetail() {
   el("detail-card").classList.add("hidden");
-  document.body.classList.remove("detail-open");
+  if (el("add-sheet").classList.contains("hidden")) {
+    document.body.classList.remove("detail-open");
+  }
 }
 
+function openAddSheet() {
+  closeDetail();
+  el("add-sheet").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+}
+
+function closeAddSheet(updateBody = true) {
+  el("add-sheet").classList.add("hidden");
+  if (updateBody && el("detail-card").classList.contains("hidden")) {
+    document.body.classList.remove("detail-open");
+  }
+}
+
+/* ---------- Search ---------- */
+function buildSearchResults(query) {
+  const q = normalizeSearch(query);
+  if (!q) return [];
+
+  const results = [];
+
+  for (const line of TUBE_LINES) {
+    const haystack = normalizeSearch(`${line.code} ${line.name} ${line.id} underground metro`);
+    const score = searchScore(q, haystack, normalizeSearch(line.code), normalizeSearch(line.name));
+    if (score > 0) results.push({ type: "line", score, line });
+  }
+
+  for (const place of PLACES) {
+    const haystack = normalizeSearch(`${place.name} ${place.category} ${place.note || ""}`);
+    const score = searchScore(q, haystack, normalizeSearch(place.name));
+    if (score > 0) results.push({ type: "place", score, place });
+  }
+
+  for (const station of getSearchStations()) {
+    const lineText = station.lines.map(formatLineName).join(" ");
+    const haystack = normalizeSearch(`${station.name} ${lineText} station metro underground`);
+    const score = searchScore(q, haystack, normalizeSearch(station.name));
+    if (score > 0) results.push({ type: "station", score, station });
+  }
+
+  return results
+    .sort((a, b) => b.score - a.score || resultTitle(a).localeCompare(resultTitle(b)))
+    .slice(0, 9);
+}
+
+function getSearchStations() {
+  const groups = new Map();
+
+  for (const station of stationRegistry.values()) {
+    /* Approximate physical grouping for search display only.
+       The real interchange/hub model is rebuilt in v1.3B. */
+    const key = [
+      normalizeStationName(station.name),
+      Number(station.lat).toFixed(3),
+      Number(station.lon).toFixed(3)
+    ].join("|");
+
+    const existing = groups.get(key) || {
+      id: station.id,
+      name: station.name,
+      lat: station.lat,
+      lon: station.lon,
+      modes: new Set(),
+      lines: []
+    };
+
+    station.lines.forEach(line => addStationLine(existing, line));
+    station.modes?.forEach?.(mode => existing.modes.add(mode));
+    groups.set(key, existing);
+  }
+
+  return [...groups.values()].map(station => ({
+    ...station,
+    lines: station.lines.slice().sort(compareTubeLines)
+  }));
+}
+
+function searchScore(q, haystack, ...preferredFields) {
+  if (!haystack.includes(q)) return 0;
+  if (preferredFields.some(field => field === q)) return 100;
+  if (preferredFields.some(field => field.startsWith(q))) return 80;
+  if (haystack.startsWith(q)) return 70;
+  return 45;
+}
+
+function renderSearchResults() {
+  const query = el("search-input").value.trim();
+  const resultsNode = el("search-results");
+  const clearButton = el("search-clear");
+
+  clearButton.classList.toggle("hidden", !query);
+
+  if (!query) {
+    hideSearchResults();
+    return;
+  }
+
+  const results = buildSearchResults(query);
+  resultsNode.innerHTML = results.length
+    ? results.map((result, index) => searchResultHtml(result, index)).join("")
+    : `<div class="search-result" style="cursor:default"><div class="result-icon">–</div><div><div class="result-title">No local result yet</div><div class="result-sub">Search currently covers Metro and frequent places.</div></div></div>`;
+
+  resultsNode.classList.remove("hidden");
+
+  resultsNode.querySelectorAll("[data-result-index]").forEach(button => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.resultIndex);
+      selectSearchResult(results[index]);
+    });
+  });
+}
+
+function searchResultHtml(result, index) {
+  if (result.type === "line") {
+    return `
+      <button class="search-result" data-result-index="${index}" role="option">
+        <div class="result-icon" style="background:${result.line.color};color:${idealTextColor(result.line.color)}">${escapeHtml(result.line.code)}</div>
+        <div><div class="result-title">${escapeHtml(formatLineName(result.line))}</div><div class="result-sub">Metro line</div></div>
+      </button>`;
+  }
+
+  if (result.type === "station") {
+    const lineNames = result.station.lines.map(formatLineName).join(" · ");
+    return `
+      <button class="search-result" data-result-index="${index}" role="option">
+        <div class="result-icon">M</div>
+        <div><div class="result-title">${escapeHtml(result.station.name)}</div><div class="result-sub">${escapeHtml(lineNames || "Metro station")}</div></div>
+      </button>`;
+  }
+
+  return `
+    <button class="search-result" data-result-index="${index}" role="option">
+      <div class="result-icon">●</div>
+      <div><div class="result-title">${escapeHtml(result.place.name)}</div><div class="result-sub">${escapeHtml(result.place.category)} · Frequent place</div></div>
+    </button>`;
+}
+
+function selectSearchResult(result) {
+  if (!result) return;
+  hideSearchResults();
+  el("search-input").blur();
+
+  if (result.type === "place") {
+    layerState.places = true;
+    applyLayerState();
+    map.panTo({ lat: result.place.lat, lng: result.place.lng });
+    map.setZoom(Math.max(map.getZoom() || 15, 16));
+    showPlaceInfo(result.place);
+    return;
+  }
+
+  if (result.type === "station") {
+    layerState.metro = true;
+    applyLayerState();
+    map.panTo({ lat: result.station.lat, lng: result.station.lon });
+    map.setZoom(16);
+    showStationInfo(result.station);
+    return;
+  }
+
+  if (result.type === "line") {
+    layerState.metro = true;
+    applyLayerState();
+    focusTubeLine(result.line.id);
+    showLineInfo(result.line);
+  }
+}
+
+function focusTubeLine(lineId) {
+  const geometries = lineGeometryRegistry.get(lineId) || [];
+  if (!geometries.length) return;
+
+  const bounds = new google.maps.LatLngBounds();
+  geometries.flat().forEach(point => bounds.extend(point));
+  if (!bounds.isEmpty()) map.fitBounds(bounds, 44);
+}
+
+function hideSearchResults() {
+  el("search-results").classList.add("hidden");
+}
+
+function refreshSearchIfOpen() {
+  if (el("search-input").value.trim()) renderSearchResults();
+}
+
+function resultTitle(result) {
+  if (result.type === "line") return formatLineName(result.line);
+  if (result.type === "station") return result.station.name;
+  return result.place.name;
+}
+
+/* ---------- Live device location ---------- */
+function requestOrRecenterLocation() {
+  if (!navigator.geolocation) {
+    showToast("This browser does not provide device location.");
+    return;
+  }
+
+  if (userLocationWatchId !== null && lastUserPosition) {
+    followUserLocation = true;
+    centerOnUser();
+    updateLocationButton();
+    return;
+  }
+
+  followUserLocation = true;
+  updateLocationButton();
+  showToast("Your browser may ask for location permission.", 2600);
+
+  userLocationWatchId = navigator.geolocation.watchPosition(
+    position => {
+      const coords = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude
+      };
+
+      lastUserPosition = {
+        coords,
+        accuracy: position.coords.accuracy
+      };
+
+      drawUserLocation(coords, position.coords.accuracy);
+
+      if (followUserLocation) {
+        map.panTo(coords);
+        if ((map.getZoom() || 0) < 16) map.setZoom(16);
+      }
+
+      updateLocationButton();
+    },
+    error => {
+      console.warn("Location error", error);
+      userLocationWatchId = null;
+      followUserLocation = false;
+      updateLocationButton();
+
+      const messages = {
+        1: "Location permission was denied. You can change it in your browser/site settings.",
+        2: "Your device location is currently unavailable.",
+        3: "Location request timed out. Try again."
+      };
+      showToast(messages[error.code] || "Could not get your location.", 3800);
+    },
+    {
+      enableHighAccuracy: true,
+      maximumAge: 5000,
+      timeout: 15000
+    }
+  );
+}
+
+function drawUserLocation(coords, accuracy) {
+  if (!userLocationMarker) {
+    userLocationMarker = new google.maps.Marker({
+      map,
+      position: coords,
+      zIndex: 999,
+      title: "Your location",
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        fillColor: "#4285F4",
+        fillOpacity: 1,
+        strokeColor: "#FFFFFF",
+        strokeOpacity: 1,
+        strokeWeight: 3,
+        scale: 8
+      }
+    });
+  } else {
+    userLocationMarker.setPosition(coords);
+  }
+
+  if (!userAccuracyCircle) {
+    userAccuracyCircle = new google.maps.Circle({
+      map,
+      center: coords,
+      radius: accuracy,
+      clickable: false,
+      strokeColor: "#4285F4",
+      strokeOpacity: 0.48,
+      strokeWeight: 1,
+      fillColor: "#4285F4",
+      fillOpacity: 0.12,
+      zIndex: 2
+    });
+  } else {
+    userAccuracyCircle.setCenter(coords);
+    userAccuracyCircle.setRadius(accuracy);
+  }
+}
+
+function centerOnUser() {
+  if (!lastUserPosition || !map) return;
+  map.panTo(lastUserPosition.coords);
+  if ((map.getZoom() || 0) < 16) map.setZoom(16);
+}
+
+function updateLocationButton() {
+  const button = el("location-btn");
+  const tracking = userLocationWatchId !== null;
+  button.classList.toggle("active", tracking && followUserLocation);
+  button.classList.toggle("paused", tracking && !followUserLocation);
+  button.textContent = tracking ? (followUserLocation ? "◉" : "◎") : "◎";
+  button.title = tracking && !followUserLocation ? "Re-centre on my location" : "Use my location";
+}
+
+/* ---------- Add sheet placeholder ---------- */
+function handleAddMethod(method) {
+  if (method === "current") {
+    closeAddSheet();
+    requestOrRecenterLocation();
+    showToast("Live location is ready. Saving it as a frequent place comes in the Places build.", 3300);
+    return;
+  }
+
+  if (method === "search") {
+    closeAddSheet();
+    el("search-input").focus();
+    showToast("Local search is live. Adding arbitrary Google places is next.", 3000);
+    return;
+  }
+
+  if (method === "tap") {
+    showToast("Tap-to-add will be activated when frequent-place saving lands.");
+    return;
+  }
+
+  if (method === "centre") {
+    const center = map?.getCenter();
+    if (center) {
+      showToast(`Map centre ready: ${center.lat().toFixed(5)}, ${center.lng().toFixed(5)}. Saving comes next.`, 3400);
+    }
+  }
+}
+
+/* ---------- Utilities ---------- */
 function getCache(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -607,6 +1124,23 @@ function normalizeStationName(name = "") {
   return cleanStationName(name).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function normalizeSearch(value = "") {
+  return String(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9&]+/g, " ")
+    .trim();
+}
+
+function compareTubeLines(a, b) {
+  return (TUBE_LINE_ORDER.get(a.id) ?? 999) - (TUBE_LINE_ORDER.get(b.id) ?? 999);
+}
+
+function formatLineName(line) {
+  return `${line.code} · ${line.name}`;
+}
+
 function idealTextColor(hex) {
   const clean = hex.replace("#", "");
   const r = parseInt(clean.substring(0, 2), 16);
@@ -625,17 +1159,34 @@ function escapeHtml(value = "") {
     .replaceAll("'", "&#039;");
 }
 
-/* Controls */
+/* ---------- Controls ---------- */
+el("metro-btn").addEventListener("click", () => {
+  if (!map) return;
+  toggleLayer("metro");
+});
+
+el("rail-btn").addEventListener("click", () => {
+  if (!map) return;
+  toggleLayer("rail");
+});
+
+el("places-btn").addEventListener("click", () => {
+  if (!map) return;
+  toggleLayer("places");
+});
+
 el("roadmap-btn").addEventListener("click", () => {
-  map?.setMapTypeId(google.maps.MapTypeId.ROADMAP);
+  if (!map) return;
+  map.setMapTypeId(google.maps.MapTypeId.ROADMAP);
   activeMapType = "roadmap";
   el("roadmap-btn").classList.add("active");
   el("satellite-btn").classList.remove("active");
-  if (undergroundMode) map.setOptions({ styles: UNDERGROUND_MAP_STYLES });
+  applyBaseMapStyle();
 });
 
 el("satellite-btn").addEventListener("click", () => {
-  map?.setMapTypeId(google.maps.MapTypeId.SATELLITE);
+  if (!map) return;
+  map.setMapTypeId(google.maps.MapTypeId.SATELLITE);
   activeMapType = "satellite";
   el("satellite-btn").classList.add("active");
   el("roadmap-btn").classList.remove("active");
@@ -648,12 +1199,33 @@ el("traffic-btn").addEventListener("click", () => {
   el("traffic-btn").classList.toggle("active", !active);
 });
 
-el("underground-btn").addEventListener("click", () => {
-  if (!map) return;
-  setUndergroundVisibility(!undergroundMode);
+el("info-btn").addEventListener("click", showMapInfo);
+el("detail-close").addEventListener("click", closeDetail);
+
+el("add-btn").addEventListener("click", openAddSheet);
+el("add-close").addEventListener("click", () => closeAddSheet());
+el("add-sheet").querySelectorAll("[data-add-method]").forEach(button => {
+  button.addEventListener("click", () => handleAddMethod(button.dataset.addMethod));
 });
 
-el("detail-close").addEventListener("click", closeDetail);
+el("location-btn").addEventListener("click", requestOrRecenterLocation);
+
+el("search-input").addEventListener("input", renderSearchResults);
+el("search-input").addEventListener("focus", () => {
+  if (el("search-input").value.trim()) renderSearchResults();
+});
+el("search-input").addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    hideSearchResults();
+    el("search-input").blur();
+  }
+});
+el("search-clear").addEventListener("click", () => {
+  el("search-input").value = "";
+  el("search-clear").classList.add("hidden");
+  hideSearchResults();
+  el("search-input").focus();
+});
 
 el("settings-btn").addEventListener("click", () => showModal("settings-modal"));
 el("settings-close").addEventListener("click", () => hideModal("settings-modal"));
@@ -677,10 +1249,10 @@ el("save-key-btn").addEventListener("click", async () => {
     return;
   }
 
-  const btn = el("save-key-btn");
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = "Loading…";
+  const button = el("save-key-btn");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Loading…";
 
   try {
     localStorage.setItem(GOOGLE_KEY_STORAGE, key);
@@ -690,14 +1262,15 @@ el("save-key-btn").addEventListener("click", async () => {
     localStorage.removeItem(GOOGLE_KEY_STORAGE);
     showModal("key-modal");
   } finally {
-    btn.disabled = false;
-    btn.textContent = original;
+    button.disabled = false;
+    button.textContent = original;
   }
 });
 
-/* PWA registration disabled on localhost development build. */
+/* PWA registration stays disabled in this development build.
+   We will re-enable it deliberately after the dev/stable service-worker scopes are cleaned up. */
 
-/* Boot */
+/* ---------- Boot ---------- */
 const storedKey = localStorage.getItem(GOOGLE_KEY_STORAGE);
 if (storedKey) {
   bootWithKey(storedKey);
