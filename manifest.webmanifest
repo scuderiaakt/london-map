@@ -1,0 +1,21 @@
+{
+  "name": "London Life Map",
+  "short_name": "London Map",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b1017",
+  "theme_color": "#0b1017",
+  "description": "Personal London map with Google Maps, traffic, satellite view and a custom TfL Underground overlay.",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

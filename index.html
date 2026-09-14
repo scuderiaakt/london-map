@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1017" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="London Map" />
+  <title>London Life Map</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main id="app">
+    <div id="map"></div>
+
+    <header class="topbar glass">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        <div>
+          <strong>London Life Map</strong>
+          <span id="network-status">Loading Tube network…</span>
+        </div>
+      </div>
+      <button id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings">⚙</button>
+    </header>
+
+    <section class="map-controls glass" aria-label="Map controls">
+      <div class="segmented">
+        <button id="roadmap-btn" class="control-btn active">Map</button>
+        <button id="satellite-btn" class="control-btn">Satellite</button>
+      </div>
+      <button id="traffic-btn" class="control-btn">Traffic</button>
+      <button id="underground-btn" class="control-btn underground-toggle">
+        <span class="tube-symbol">◎</span> Underground
+      </button>
+    </section>
+
+    <aside id="line-legend" class="line-legend glass hidden" aria-label="Tube line legend"></aside>
+
+    <section id="detail-card" class="detail-card glass hidden" aria-live="polite">
+      <button id="detail-close" class="detail-close" aria-label="Close">×</button>
+      <div id="detail-content"></div>
+    </section>
+
+    <div class="attribution glass">Data provided by Transport for London</div>
+
+    <section id="key-modal" class="modal">
+      <div class="modal-card">
+        <div class="modal-kicker">GOOGLE MAPS SETUP</div>
+        <h1>Connect Google Maps</h1>
+        <p>
+          This map uses Google Maps for the dark basemap, satellite imagery, high-resolution zoom,
+          and live traffic. Paste your Maps JavaScript API key below. It is stored only in this browser.
+        </p>
+        <label for="api-key-input">Google Maps JavaScript API key</label>
+        <input id="api-key-input" type="password" autocomplete="off" placeholder="AIza…" />
+        <div class="modal-actions">
+          <button id="save-key-btn" class="primary-btn">Open map</button>
+          <a class="text-link" href="https://developers.google.com/maps/documentation/javascript/get-api-key" target="_blank" rel="noreferrer">
+            Get a key
+          </a>
+        </div>
+        <p class="fineprint">
+          For a phone-friendly hosted version, restrict the key to the website domain after deployment.
+        </p>
+      </div>
+    </section>
+
+    <section id="settings-modal" class="modal hidden">
+      <div class="modal-card small">
+        <button id="settings-close" class="detail-close" aria-label="Close">×</button>
+        <div class="modal-kicker">SETTINGS</div>
+        <h2>Map settings</h2>
+        <button id="replace-key-btn" class="secondary-btn">Replace Google Maps key</button>
+        <button id="refresh-tfl-btn" class="secondary-btn">Refresh Tube data</button>
+        <p class="fineprint">Tube geometry is cached on your device for 24 hours to make mobile loading faster.</p>
+      </div>
+    </section>
+  </main>
+
+
+  <script>
+    // Development mode: prevent an old service worker from serving stale JavaScript.
+    if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.getRegistrations()
+          .then(registrations => registrations.forEach(r => r.unregister()))
+          .catch(() => {});
+      }
+      if ("caches" in window) {
+        caches.keys()
+          .then(keys => Promise.all(keys.map(k => caches.delete(k))))
+          .catch(() => {});
+      }
+    }
+  </script>
+
+  <script src="app.js?v=1.2.0"></script>
+</body>
+</html>
