@@ -1,4 +1,4 @@
-/* London Life Map v1.3F styles */
+/* Our Cities Map v1.4A styles */
 :root {
   --bg: #0b1017;
   --panel: rgba(13, 20, 30, .86);
@@ -1537,4 +1537,107 @@ body.layers-panel-open .layers-shell .item-focus-chip { opacity: 0; pointer-even
 @media (max-width: 720px) {
   #route-editor-sheet { left: 7px !important; right: 7px !important; top: auto !important; bottom: max(7px, env(safe-area-inset-bottom)) !important; width: auto !important; }
   #detail-card { left: 7px !important; right: 7px !important; top: auto !important; bottom: max(7px, env(safe-area-inset-bottom)) !important; width: auto !important; }
+}
+
+
+/* ---------- v1.4A: multi-city selector + cinematic city transition ---------- */
+.city-switcher {
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  padding-bottom: 12px;
+  margin-bottom: 2px;
+}
+.city-switcher-head { margin-bottom: 8px; }
+.city-switcher-row {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 1px 1px 4px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.city-switcher-row::-webkit-scrollbar { display: none; }
+.city-choice {
+  min-height: 42px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 12px;
+  padding: 7px 12px;
+  background: rgba(255,255,255,.045);
+  color: #eef5ff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  transition: background .18s ease, border-color .18s ease, transform .18s ease;
+}
+.city-choice:hover { background: rgba(255,255,255,.085); transform: translateY(-1px); }
+.city-choice.active {
+  background: rgba(100,168,255,.17);
+  border-color: rgba(100,168,255,.48);
+  box-shadow: inset 0 0 0 1px rgba(100,168,255,.09);
+}
+.city-choice-ela.active {
+  background: linear-gradient(135deg, rgba(100,168,255,.16), rgba(255,142,199,.12));
+  border-color: rgba(255,142,199,.42);
+}
+.city-choice-name { font-size: 12px; font-weight: 850; letter-spacing: .01em; }
+.city-choice-note {
+  font-size: 10px;
+  font-weight: 800;
+  color: #ffc5df;
+  opacity: .95;
+}
+.city-data-status {
+  min-height: 15px;
+  margin-top: 6px;
+  color: #8fa1b5;
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+.city-arrival {
+  position: absolute;
+  z-index: 120;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(.965);
+  min-width: min(330px, 78vw);
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .42s ease, transform .42s ease, visibility 0s linear .42s;
+  text-shadow: 0 5px 24px rgba(0,0,0,.65);
+}
+.city-arrival.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, -50%) scale(1);
+  transition: opacity .35s ease, transform .35s ease;
+}
+.city-arrival-name {
+  font-size: clamp(38px, 7vw, 78px);
+  line-height: .98;
+  font-weight: 900;
+  letter-spacing: -.045em;
+  color: #fff;
+}
+.city-arrival-gesture {
+  margin-top: 10px;
+  min-height: 19px;
+  font-size: clamp(14px, 2.2vw, 19px);
+  font-weight: 800;
+  color: #ffd3e6;
+  letter-spacing: .02em;
+}
+body.city-flight-active .layers-panel { pointer-events: none; }
+body.city-flight-active .city-choice { opacity: .62; }
+
+@media (max-width: 700px) {
+  .city-choice { min-height: 39px; padding: 6px 10px; }
+  .city-choice-name { font-size: 11px; }
+  .city-choice-note { font-size: 9px; }
+  .city-data-status { font-size: 9px; }
+  .city-arrival-name { font-size: clamp(42px, 14vw, 68px); }
+  .city-arrival-gesture { font-size: 15px; }
 }

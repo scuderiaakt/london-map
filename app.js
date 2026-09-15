@@ -1,4 +1,4 @@
-/* London Life Map v1.3F
+/* Our Cities Map v1.4A
    Google Maps basemap + geographic London Underground overlay.
    v1.3D adds Rail + Tram, transport focus, richer information panels and route-building hooks,
    while preserving persistent favorites, geographic Metro and the mobile-first interface.
@@ -1782,7 +1782,7 @@ async function geocodeLocationForPlace() {
   try {
     const response = await geocoder.geocode({
       address: query,
-      region: "GB",
+      region: getActiveCityConfig().geocoderRegion,
       bounds: new google.maps.LatLngBounds({ lat: 51.20, lng: -0.60 }, { lat: 51.75, lng: 0.35 })
     });
     const result = response?.results?.[0];
@@ -2011,7 +2011,7 @@ function renderFavoritesSheet() {
         </div>`).join("")
     : `<div class="empty-state">No frequent places yet.</div>`;
 
-  const sortedRoutes = favoriteRoutes.slice().sort((a, b) => Number(b.useCount || 0) - Number(a.useCount || 0) || a.name.localeCompare(b.name));
+  const sortedRoutes = favoriteRoutes.filter(route => getRouteCityId(route) === currentCityId).slice().sort((a, b) => Number(b.useCount || 0) - Number(a.useCount || 0) || a.name.localeCompare(b.name));
   routesNode.innerHTML = sortedRoutes.length
     ? sortedRoutes.map(route => `
         <div class="favorite-row">
@@ -3488,6 +3488,7 @@ function rememberV13ESearch(text) {
 }
 
 function favoriteCategoryVisible(place) {
+  if (getPlaceCityId(place) !== currentCityId) return false;
   if (selectedFavoriteCategories.has("all")) return true;
   return selectedFavoriteCategories.has(canonicalFavoriteCategory(place.category, place.name));
 }
@@ -3607,8 +3608,8 @@ async function searchAllLondon(query) {
       fields: ["id", "displayName", "formattedAddress", "location", "primaryType", "primaryTypeDisplayName"],
       locationBias: map.getBounds() || undefined,
       maxResultCount: 7,
-      language: "en-GB",
-      region: "gb"
+      language: getActiveCityConfig().language,
+      region: getActiveCityConfig().region
     };
     const response = await Place.searchByText(request);
     results = (response.places || []).map(place => {
@@ -3636,7 +3637,7 @@ async function searchAllLondon(query) {
       const response = await geocoder.geocode({
         address: cleaned,
         bounds: map.getBounds() || undefined,
-        region: "GB"
+        region: getActiveCityConfig().geocoderRegion
       });
       results = (response.results || []).slice(0, 7).map(result => {
         const coords = latLngLiteral(result.geometry?.location);
@@ -3665,13 +3666,17 @@ async function searchAllLondon(query) {
     query: cleaned,
     loading: false,
     results,
-    error: results.length ? "" : (placesError ? "Google place search is not enabled for this API key yet." : "No London place found.")
+    error: results.length ? "" : (placesError ? "Google place search is not enabled for this API key yet." : `No ${getActiveCityConfig().name} place found.`)
   };
   renderSearchResults();
 }
 
 function buildV13ESearchResults(query) {
-  return buildSearchResults(query);
+  return buildSearchResults(query).filter(result => {
+    if (result.type === "place") return getPlaceCityId(result.place) === currentCityId;
+    if (result.type === "route") return getRouteCityId(result.route) === currentCityId;
+    return currentCityId === "london";
+  });
 }
 
 function renderSearchResults() {
@@ -3702,7 +3707,7 @@ function renderSearchResults() {
 
   const externalMatchesQuery = normalizeSearch(universalSearchState.query) === normalizeSearch(query);
   if (externalMatchesQuery && universalSearchState.loading) {
-    html += `<div class="search-status-row">Searching the rest of London…</div>`;
+    html += `<div class="search-status-row">Searching the rest of ${escapeHtml(getActiveCityConfig().name)}…</div>`;
   } else if (externalMatchesQuery && universalSearchState.results.length) {
     html += universalSearchState.results.map((result, index) => `
       <button class="search-result external-place-result" data-external-index="${index}" role="option">
@@ -3713,7 +3718,7 @@ function renderSearchResults() {
     html += `<div class="search-status-row">${escapeHtml(universalSearchState.error)} You can still search the transport map and your saved places.</div>`;
   } else {
     html += `<button class="search-result search-all-result" data-search-all="true" role="option">
-      <div class="result-icon">⌕</div><div><div class="result-title">Search all London for “${escapeHtml(query)}”</div><div class="result-sub">Businesses, cafés, markets, addresses and other real-world places</div></div>
+      <div class="result-icon">⌕</div><div><div class="result-title">Search all ${escapeHtml(getActiveCityConfig().name)} for “${escapeHtml(query)}”</div><div class="result-sub">Businesses, cafés, markets, addresses and other real-world places</div></div>
     </button>`;
   }
 
@@ -3843,12 +3848,12 @@ function savePlaceFromEditor() {
   if (editingFrequentPlaceId) {
     const index = frequentPlaces.findIndex(item => item.id === editingFrequentPlaceId);
     if (index >= 0) {
-      place = { ...frequentPlaces[index], name, lat: pendingPlaceCoordinates.lat, lng: pendingPlaceCoordinates.lng, category, color: placeColorForCategory(category), note, updatedAt: Date.now() };
+      place = { ...frequentPlaces[index], city: frequentPlaces[index].city || currentCityId, name, lat: pendingPlaceCoordinates.lat, lng: pendingPlaceCoordinates.lng, category, color: placeColorForCategory(category), note, updatedAt: Date.now() };
       frequentPlaces[index] = place;
     }
   }
   if (!place) {
-    place = { id: `place-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, name, lat: pendingPlaceCoordinates.lat, lng: pendingPlaceCoordinates.lng, category, color: placeColorForCategory(category), anchor: false, note, createdAt: Date.now() };
+    place = { id: `place-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, city: currentCityId, name, lat: pendingPlaceCoordinates.lat, lng: pendingPlaceCoordinates.lng, category, color: placeColorForCategory(category), anchor: false, note, createdAt: Date.now() };
     frequentPlaces.push(place);
   }
   saveFrequentPlaces();
@@ -3887,7 +3892,7 @@ function renderFavoritesSheet() {
   const placesNode = el("favorite-places-list");
   const routesNode = el("favorite-routes-list");
   if (!placesNode || !routesNode) return;
-  const sortedPlaces = frequentPlaces.slice().sort((a,b) => canonicalFavoriteCategory(a.category,a.name).localeCompare(canonicalFavoriteCategory(b.category,b.name)) || a.name.localeCompare(b.name));
+  const sortedPlaces = frequentPlaces.filter(place => getPlaceCityId(place) === currentCityId).slice().sort((a,b) => canonicalFavoriteCategory(a.category,a.name).localeCompare(canonicalFavoriteCategory(b.category,b.name)) || a.name.localeCompare(b.name));
   placesNode.innerHTML = sortedPlaces.length ? sortedPlaces.map(place => {
     const cat = canonicalFavoriteCategory(place.category, place.name);
     const meta = FAVORITE_CATEGORY_META.find(item => item.id === cat);
@@ -5032,6 +5037,320 @@ el("save-key-btn").addEventListener("click", async () => {
     button.textContent = original;
   }
 });
+
+
+/* ---------- v1.4A: multi-city engine + cinematic city travel ---------- */
+const V14_ACTIVE_CITY_STORAGE = "cityLife.activeCity.v1";
+const V14_CITY_LAYER_STATE_STORAGE = "cityLife.cityLayerState.v1";
+const V14_FAVORITE_MIGRATION_STORAGE = "cityLife.favoriteCityMigration.v1";
+
+const CITY_CONFIG = {
+  london: {
+    id: "london", name: "London", selector: "London", center: { lat: 51.5078, lng: -0.1277 }, zoom: 12.4,
+    region: "gb", geocoderRegion: "GB", language: "en-GB", gesture: "",
+    status: "London is the reference city · full v1.3 transport + city layers available."
+  },
+  rome: {
+    id: "rome", name: "Rome", selector: "Rome (Ela ❤️)", center: { lat: 41.9028, lng: 12.4964 }, zoom: 12.25,
+    region: "it", geocoderRegion: "IT", language: "en", gesture: "Ela ❤️",
+    status: "Rome city shell is ready · full transit data comes in v1.4B."
+  },
+  istanbul: {
+    id: "istanbul", name: "İstanbul", selector: "İstanbul", center: { lat: 41.0082, lng: 28.9784 }, zoom: 11.6,
+    region: "tr", geocoderRegion: "TR", language: "tr", gesture: "",
+    status: "İstanbul city shell is ready · full transit data comes in v1.4C."
+  },
+  izmir: {
+    id: "izmir", name: "İzmir", selector: "İzmir", center: { lat: 38.4237, lng: 27.1428 }, zoom: 12.0,
+    region: "tr", geocoderRegion: "TR", language: "tr", gesture: "",
+    status: "İzmir city shell is ready · full transit data comes in v1.4D."
+  }
+};
+
+let currentCityId = loadActiveCityId();
+let cityFlightRunning = false;
+let cityArrivalTimer = null;
+let cityLayerMemory = loadCityLayerMemory();
+
+function loadActiveCityId() {
+  const stored = localStorage.getItem(V14_ACTIVE_CITY_STORAGE);
+  return CITY_CONFIG[stored] ? stored : "london";
+}
+
+function getActiveCityConfig() {
+  return CITY_CONFIG[currentCityId] || CITY_CONFIG.london;
+}
+
+function loadCityLayerMemory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(V14_CITY_LAYER_STATE_STORAGE) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch { return {}; }
+}
+
+function saveCurrentCityLayerMemory() {
+  cityLayerMemory[currentCityId] = {
+    metro: !!layerState.metro, rail: !!layerState.rail, tram: !!layerState.tram,
+    places: !!layerState.places,
+    districts: !!cityInfoState?.districts, weather: !!cityInfoState?.weather, wind: !!cityInfoState?.wind
+  };
+  try { localStorage.setItem(V14_CITY_LAYER_STATE_STORAGE, JSON.stringify(cityLayerMemory)); } catch {}
+}
+
+function restoreCityLayerMemory(cityId) {
+  const saved = cityLayerMemory[cityId];
+  if (cityId === "london") {
+    layerState.metro = saved ? !!saved.metro : !!savedLayerPrefs.metro;
+    layerState.rail = saved ? !!saved.rail : !!savedLayerPrefs.rail;
+    layerState.tram = saved ? !!saved.tram : !!savedLayerPrefs.tram;
+    cityInfoState.districts = saved ? !!saved.districts : !!cityInfoState.districts;
+    cityInfoState.weather = saved ? !!saved.weather : !!cityInfoState.weather;
+    cityInfoState.wind = saved ? !!saved.wind : !!cityInfoState.wind;
+  } else {
+    // v1.4A establishes the city shell. City-specific transit arrives in B/C/D.
+    layerState.metro = false;
+    layerState.rail = false;
+    layerState.tram = false;
+    cityInfoState.districts = false;
+    cityInfoState.weather = false;
+    cityInfoState.wind = false;
+  }
+  layerState.places = saved ? !!saved.places : false;
+}
+
+function inferCityIdFromCoords(lat, lng) {
+  const point = { lat: Number(lat), lng: Number(lng) };
+  let best = "london", score = Infinity;
+  for (const config of Object.values(CITY_CONFIG)) {
+    const dx = (point.lng - config.center.lng) * Math.cos(((point.lat + config.center.lat) / 2) * Math.PI / 180);
+    const dy = point.lat - config.center.lat;
+    const d = dx * dx + dy * dy;
+    if (d < score) { score = d; best = config.id; }
+  }
+  return best;
+}
+
+function getPlaceCityId(place) {
+  return place?.city && CITY_CONFIG[place.city] ? place.city : inferCityIdFromCoords(place?.lat, place?.lng);
+}
+
+function getRouteCityId(route) {
+  return route?.city && CITY_CONFIG[route.city] ? route.city : "london";
+}
+
+function migrateV14FavoriteCities() {
+  let changedPlaces = false, changedRoutes = false;
+  frequentPlaces = frequentPlaces.map(place => {
+    if (place.city && CITY_CONFIG[place.city]) return place;
+    changedPlaces = true;
+    return { ...place, city: inferCityIdFromCoords(place.lat, place.lng) };
+  });
+  favoriteRoutes = favoriteRoutes.map(route => {
+    if (route.city && CITY_CONFIG[route.city]) return route;
+    changedRoutes = true;
+    return { ...route, city: "london" };
+  });
+  if (changedPlaces) saveFrequentPlaces();
+  if (changedRoutes) saveFavoriteRoutes();
+  try { localStorage.setItem(V14_FAVORITE_MIGRATION_STORAGE, "1"); } catch {}
+}
+
+function updateV14CityUI() {
+  const config = getActiveCityConfig();
+  document.querySelectorAll("[data-city]").forEach(button => {
+    const active = button.dataset.city === currentCityId;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  const input = el("search-input");
+  if (input) {
+    input.placeholder = `Search ${config.name}…`;
+    input.setAttribute("aria-label", `Search ${config.name}`);
+  }
+  const title = el("favorites-city-title");
+  if (title) title.textContent = `Your ${config.name}`;
+  const locationTitle = el("location-search-title");
+  if (locationTitle) locationTitle.textContent = `Find a place in ${config.name}`;
+  const locationStatus = el("location-search-status");
+  if (locationStatus && !locationStatus.dataset.userStatus) locationStatus.textContent = `Search ${config.name} by place name or address.`;
+  const status = el("city-data-status");
+  if (status) status.textContent = config.status;
+  document.title = `${config.name} · Our Cities Map`;
+  syncV13EPanelUI();
+  syncV13FCityButtons();
+}
+
+function showCityArrival(config) {
+  const node = el("city-arrival");
+  if (!node) return;
+  const nameNode = node.querySelector(".city-arrival-name");
+  const gestureNode = node.querySelector(".city-arrival-gesture");
+  nameNode.textContent = config.name;
+  gestureNode.textContent = config.gesture || "";
+  node.classList.remove("show");
+  void node.offsetWidth;
+  node.classList.add("show");
+  clearTimeout(cityArrivalTimer);
+  cityArrivalTimer = setTimeout(() => node.classList.remove("show"), config.gesture ? 1750 : 1350);
+}
+
+function easeInOutCubic(t) {
+  return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function interpolateLng(a, b, t) {
+  let diff = b - a;
+  if (diff > 180) diff -= 360;
+  if (diff < -180) diff += 360;
+  let value = a + diff * t;
+  if (value > 180) value -= 360;
+  if (value < -180) value += 360;
+  return value;
+}
+
+function animateCityFlight(targetConfig) {
+  if (!map) return Promise.resolve();
+  const startCenterRaw = map.getCenter();
+  const start = startCenterRaw ? { lat: startCenterRaw.lat(), lng: startCenterRaw.lng() } : getActiveCityConfig().center;
+  const startZoom = Number(map.getZoom() || 11);
+  const target = targetConfig.center;
+  const duration = 2350;
+  const cruiseZoom = Math.min(5.15, startZoom, targetConfig.zoom);
+  const started = performance.now();
+  cityFlightRunning = true;
+  document.body.classList.add("city-flight-active");
+
+  return new Promise(resolve => {
+    function frame(now) {
+      const raw = Math.min(1, (now - started) / duration);
+      const t = easeInOutCubic(raw);
+      const centerProgress = easeInOutCubic(Math.min(1, Math.max(0, (raw - .08) / .84)));
+      const lat = start.lat + (target.lat - start.lat) * centerProgress;
+      const lng = interpolateLng(start.lng, target.lng, centerProgress);
+      let zoom;
+      if (raw < .42) zoom = startZoom + (cruiseZoom - startZoom) * easeInOutCubic(raw / .42);
+      else zoom = cruiseZoom + (targetConfig.zoom - cruiseZoom) * easeInOutCubic((raw - .42) / .58);
+      map.moveCamera({ center: { lat, lng }, zoom });
+      if (raw < 1) requestAnimationFrame(frame);
+      else {
+        map.moveCamera({ center: target, zoom: targetConfig.zoom });
+        cityFlightRunning = false;
+        document.body.classList.remove("city-flight-active");
+        resolve();
+      }
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+async function switchCity(nextCityId, options = {}) {
+  if (!CITY_CONFIG[nextCityId] || cityFlightRunning) return;
+  if (nextCityId === currentCityId) {
+    if (options.recenter && map) await animateCityFlight(CITY_CONFIG[nextCityId]);
+    return;
+  }
+  saveCurrentCityLayerMemory();
+  clearFavoriteRouteFocus?.();
+  transientTransportSelection = null;
+  persistentTransportFocus = null;
+  closeDetail?.();
+  closeFavoritesSheet?.(false);
+  currentCityId = nextCityId;
+  localStorage.setItem(V14_ACTIVE_CITY_STORAGE, currentCityId);
+  restoreCityLayerMemory(currentCityId);
+  applyLayerState();
+  applyFavoriteCategoryVisibility();
+  updateV14CityUI();
+  hideSearchResults?.();
+  if (el("search-input")) el("search-input").value = "";
+  toggleLayersPanel(false);
+  await animateCityFlight(getActiveCityConfig());
+  showCityArrival(getActiveCityConfig());
+}
+
+function cityTransportAvailable() { return currentCityId === "london"; }
+
+const toggleLayerV13FForV14 = toggleLayer;
+toggleLayer = function(name) {
+  if (["metro", "rail", "tram"].includes(name) && !cityTransportAvailable()) {
+    const config = getActiveCityConfig();
+    const phase = currentCityId === "rome" ? "v1.4B" : currentCityId === "istanbul" ? "v1.4C" : "v1.4D";
+    showToast(`${config.name} transport arrives in ${phase}.`);
+    return;
+  }
+  return toggleLayerV13FForV14(name);
+};
+
+const toggleCityInfoLayerV13FForV14 = toggleCityInfoLayer;
+toggleCityInfoLayer = async function(name) {
+  if (currentCityId !== "london") {
+    showToast(`${getActiveCityConfig().name} districts + weather arrive with its city-data build.`);
+    return;
+  }
+  return toggleCityInfoLayerV13FForV14(name);
+};
+
+const applyLayerStateV13FForV14 = applyLayerState;
+applyLayerState = function() {
+  applyLayerStateV13FForV14();
+  // Never leak London-only network artwork into another city's view if the user has stale saved state.
+  if (currentCityId !== "london") {
+    lineRenderings.forEach(item => item.polyline.setVisible(false));
+    stationOverlays.forEach(item => item.setVisible(false));
+    lineLabelOverlays.forEach(item => item.setVisible(false));
+    surfaceRenderings.forEach(item => item.polyline.setVisible(false));
+    surfaceStationOverlays.forEach(item => item.setVisible(false));
+    surfaceLabelOverlays.forEach(item => item.setVisible(false));
+  }
+  applyFavoriteCategoryVisibility();
+};
+
+const savePlaceFromEditorV13FForV14 = savePlaceFromEditor;
+savePlaceFromEditor = function() {
+  const editingId = editingFrequentPlaceId;
+  const beforeIds = new Set(frequentPlaces.map(item => item.id));
+  savePlaceFromEditorV13FForV14();
+  let changed = false;
+  if (editingId) {
+    const place = frequentPlaces.find(item => item.id === editingId);
+    if (place && !place.city) { place.city = currentCityId; changed = true; }
+  } else {
+    for (const place of frequentPlaces) {
+      if (!beforeIds.has(place.id) && !place.city) { place.city = currentCityId; changed = true; }
+    }
+  }
+  if (changed) { saveFrequentPlaces(); createPlaceMarkers(); applyLayerState(); }
+};
+
+const saveFavoriteRouteFromEditorV13FForV14 = saveFavoriteRouteFromEditor;
+saveFavoriteRouteFromEditor = function() {
+  const beforeIds = new Set(favoriteRoutes.map(item => item.id));
+  saveFavoriteRouteFromEditorV13FForV14();
+  let changed = false;
+  for (const route of favoriteRoutes) {
+    if (!beforeIds.has(route.id) && !route.city) { route.city = currentCityId; changed = true; }
+  }
+  if (changed) saveFavoriteRoutes();
+};
+
+const initMapV13FForV14 = initMap;
+initMap = function() {
+  initMapV13FForV14();
+  migrateV14FavoriteCities();
+  restoreCityLayerMemory(currentCityId);
+  const config = getActiveCityConfig();
+  map.moveCamera({ center: config.center, zoom: config.zoom });
+  applyLayerState();
+  updateV14CityUI();
+  createPlaceMarkers();
+};
+
+// Add city to newly saved records that were created by earlier handlers before v1.4A migration.
+migrateV14FavoriteCities();
+
+document.querySelectorAll("[data-city]").forEach(button => button.addEventListener("click", () => switchCity(button.dataset.city)));
+updateV14CityUI();
+
 
 /* PWA registration stays disabled in this development build.
    We will re-enable it deliberately after the dev/stable service-worker scopes are cleaned up. */

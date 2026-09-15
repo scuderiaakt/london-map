@@ -6,15 +6,16 @@
   <meta name="theme-color" content="#0b1017" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="London Map" />
-  <title>London Life Map</title>
+  <meta name="apple-mobile-web-app-title" content="Our Cities" />
+  <title>Our Cities Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.3f" />
+  <link rel="stylesheet" href="styles.css?v=1.4a" />
 </head>
 <body>
   <main id="app">
-    <div id="map" aria-label="Interactive London map"></div>
+    <div id="map" aria-label="Interactive city map"></div>
+    <div id="city-arrival" class="city-arrival" aria-live="polite"><div class="city-arrival-name"></div><div class="city-arrival-gesture"></div></div>
 
     <section class="layers-shell" aria-label="Map layers and search">
       <button id="layers-menu-btn" class="layers-menu-btn glass" aria-expanded="false" aria-controls="layers-panel" aria-label="Open map layers" title="Layers">▱</button>
@@ -28,6 +29,22 @@
           <button id="layers-panel-close" class="panel-close" aria-label="Close layers">×</button>
         </div>
 
+        <section class="city-switcher" aria-label="Choose city">
+          <div class="layer-group-head city-switcher-head">
+            <div>
+              <div class="layer-group-title">CITY</div>
+              <div id="city-switcher-sub" class="layer-group-sub">Move between your cities</div>
+            </div>
+          </div>
+          <div id="city-switcher-row" class="city-switcher-row">
+            <button class="city-choice" data-city="london"><span class="city-choice-name">London</span></button>
+            <button class="city-choice city-choice-ela" data-city="rome"><span class="city-choice-name">Rome</span><span class="city-choice-note">Ela ❤️</span></button>
+            <button class="city-choice" data-city="istanbul"><span class="city-choice-name">İstanbul</span></button>
+            <button class="city-choice" data-city="izmir"><span class="city-choice-name">İzmir</span></button>
+          </div>
+          <div id="city-data-status" class="city-data-status"></div>
+        </section>
+
         <div class="panel-search-wrap">
           <div class="search-box panel-search-box">
             <span class="search-icon" aria-hidden="true">⌕</span>
@@ -37,8 +54,8 @@
               autocomplete="off"
               autocapitalize="off"
               spellcheck="false"
-              placeholder="Search London…"
-              aria-label="Search London"
+              placeholder="Search this city…"
+              aria-label="Search this city"
             />
             <button id="search-clear" class="search-clear hidden" aria-label="Clear search">×</button>
             <div id="search-results" class="search-results hidden" role="listbox"></div>
@@ -143,7 +160,7 @@
       <div class="sub">Frequent places are saved on this device. Favorite routes can already combine Metro, Rail, Tram, Bus and walking segments.</div>
       <div class="add-options">
         <button class="add-option route-add-option" data-add-method="route"><span>★</span><b>Create favorite route</b><small>Build a reusable multi-mode route</small></button>
-        <button class="add-option" data-add-method="search"><span>⌕</span><b>Search location</b><small>Find a place or address in London</small></button>
+        <button class="add-option" data-add-method="search"><span>⌕</span><b>Search location</b><small>Find a place or address in the current city</small></button>
         <button class="add-option" data-add-method="tap"><span>⌖</span><b>Tap map</b><small>Pick an exact point</small></button>
         <button class="add-option" data-add-method="current"><span>◎</span><b>Use current location</b><small>Use your device position</small></button>
         <button class="add-option" data-add-method="centre"><span>＋</span><b>Use map centre</b><small>Use the point currently in view</small></button>
@@ -154,7 +171,7 @@
       <div class="sheet-handle" aria-hidden="true"></div>
       <button id="favorites-close" class="detail-close" aria-label="Close">×</button>
       <div class="detail-label">FAVORITES</div>
-      <h2>Your London</h2>
+      <h2 id="favorites-city-title">Your city</h2>
       <div class="favorites-section">
         <div class="favorites-heading"><span>Frequent Places</span><small>Saved on this device</small></div>
         <div id="favorite-places-list" class="favorites-list"></div>
@@ -186,12 +203,12 @@
       <div class="sheet-handle" aria-hidden="true"></div>
       <button id="location-search-close" class="detail-close" aria-label="Close">×</button>
       <div class="detail-label">SEARCH LOCATION</div>
-      <h2>Find a place in London</h2>
+      <h2 id="location-search-title">Find a place</h2>
       <div class="inline-search">
         <input id="location-search-input" class="form-control" type="search" placeholder="Place name or address" />
         <button id="location-search-btn" class="primary-btn">Search</button>
       </div>
-      <div id="location-search-status" class="sub detail-section">Search London by place name or address.</div>
+      <div id="location-search-status" class="sub detail-section">Search the current city by place name or address.</div>
       <div class="fineprint detail-section">This search uses Google's Geocoding service. If your project has only Maps JavaScript API enabled, the other add methods still work without it.</div>
     </section>
 
