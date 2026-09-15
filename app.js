@@ -1,7 +1,7 @@
-/* London Life Map v1.3C
+/* London Life Map v1.3D
    Google Maps basemap + geographic London Underground overlay.
-   v1.3C adds persistent frequent places, favorites, favorite routes and route focus,
-   while preserving the geographic Metro rebuild and mobile-first interface.
+   v1.3D adds Rail + Tram, transport focus, richer information panels and route-building hooks,
+   while preserving persistent favorites, geographic Metro and the mobile-first interface.
    Tube metadata: Transport for London. Geographic track geometry: OpenStreetMap contributors.
 */
 
@@ -50,7 +50,7 @@ const DEFAULT_PLACES = [
   { id: "default-tkmaxx-kensington", name: "TK Maxx — Kensington", lat: 51.50123, lng: -0.19189, category: "Shopping", color: "#FF7B95", note: "Luggage, towels, clothes and room basics." },
   { id: "default-decathlon-kensington", name: "Decathlon — Kensington", lat: 51.49908, lng: -0.19893, category: "Sports", color: "#4AD3B4", note: "Waterproof / sports equipment." },
   { id: "default-apple-brompton", name: "Apple Brompton Road", lat: 51.49937, lng: -0.16362, category: "Tech", color: "#B8C1CD", note: "Apple support and accessories." },
-  { id: "default-paddington", name: "Paddington Station", lat: 51.51543, lng: -0.17541, category: "Transport", color: "#FFD25A", anchor: true, note: "Airport and rail hub." }
+  { id: "default-paddington", name: "Paddington Station", lat: 51.51543, lng: -0.17541, category: "Transport", color: "#FFD25A", anchor: true, note: "Airport gateway & major rail hub." }
 ];
 
 let map;
@@ -402,7 +402,7 @@ function createPlaceMarkers() {
   });
 }
 
-async function loadTubeNetwork(force = false) {
+async function loadTubeNetworkCore(force = false) {
   clearTubeNetwork();
   stationRegistry = new Map();
   lineGeometryRegistry = new Map();
@@ -2123,6 +2123,1260 @@ function escapeHtml(value = "") {
     .replaceAll("'", "&#039;");
 }
 
+/* ---------- v1.3D: Rail + Tram + Focus ---------- */
+const SURFACE_CACHE_PREFIX = "london_surface_cache_v1_";
+const SURFACE_CORE_MODES = "overground,elizabeth-line,dlr,tram";
+const NATIONAL_RAIL_OPERATOR_HINTS = [
+  "great western", "southeastern", "south western", "southern", "thameslink",
+  "greater anglia", "chiltern", "c2c", "avanti", "london north eastern", "east midlands"
+];
+const LONDON_RAIL_BOUNDS = { south: 51.20, north: 51.72, west: -0.62, east: 0.38 };
+
+const SURFACE_LINE_PRESETS = [
+  { key: "elizabeth", code: "R1", name: "Elizabeth", displayName: "Elizabeth line", family: "rail", kind: "elizabeth", color: "#6950A1" },
+  { key: "lioness", code: "R2", name: "Lioness", displayName: "Lioness line", family: "rail", kind: "overground", color: "#FAA61A" },
+  { key: "mildmay", code: "R3", name: "Mildmay", displayName: "Mildmay line", family: "rail", kind: "overground", color: "#0077AD" },
+  { key: "windrush", code: "R4", name: "Windrush", displayName: "Windrush line", family: "rail", kind: "overground", color: "#ED1B00" },
+  { key: "weaver", code: "R5", name: "Weaver", displayName: "Weaver line", family: "rail", kind: "overground", color: "#823A62" },
+  { key: "suffragette", code: "R6", name: "Suffragette", displayName: "Suffragette line", family: "rail", kind: "overground", color: "#5BBD72" },
+  { key: "liberty", code: "R7", name: "Liberty", displayName: "Liberty line", family: "rail", kind: "overground", color: "#5D6061" },
+  { key: "dlr", code: "R8", name: "DLR", displayName: "DLR (Automated Rail)", family: "rail", kind: "dlr", color: "#00A4A7" },
+  { key: "tram", code: "T1", name: "London Trams", displayName: "London Trams", family: "tram", kind: "tram", color: "#84B817" }
+];
+
+const TUBE_LINE_INFO = {
+  piccadilly: { about: "Cross-London Underground route linking Heathrow and west London with the West End, King's Cross and north-east London.", background: "Opened in 1906 as the Great Northern, Piccadilly and Brompton Railway. Later extensions created today's Uxbridge and Heathrow branches." },
+  district: { about: "A broad sub-surface network across west, central and east London, with several branches and many useful interchange stations.", background: "The District Railway opened in 1868 and became one of the foundations of today's Underground network." },
+  circle: { about: "Central London line linking major rail terminals and inner-city districts in a loop-like service with a western extension to Hammersmith.", background: "Its roots are in the Metropolitan and District railways. The Circle name became a distinct line identity in the twentieth century and the service pattern changed in 2009." },
+  central: { about: "Fast east-west Underground route through Oxford Circus, Tottenham Court Road, the City and Stratford.", background: "The Central London Railway opened in 1900 and was later extended far into east and west London." },
+  jubilee: { about: "Modern cross-London route linking north-west London, the West End, Waterloo, Canary Wharf and Stratford.", background: "The Jubilee line opened in 1979. Its major extension through Docklands to Stratford opened in 1999." },
+  northern: { about: "Large north-south Underground network with multiple branches through the West End and City.", background: "The line grew from several early deep-level railways and received the Northern line name in 1937." },
+  victoria: { about: "High-frequency north-south route through major interchanges including Victoria, Oxford Circus, King's Cross St Pancras and Euston.", background: "Built largely as a new post-war Underground line, it opened in stages from 1968 to 1971." },
+  bakerloo: { about: "North-west to central London route serving Paddington, Baker Street, Oxford Circus, Waterloo and Elephant & Castle.", background: "It opened in 1906 as the Baker Street and Waterloo Railway; its nickname quickly became the official Bakerloo name." },
+  metropolitan: { about: "Sub-surface route from central London towards north-west London and the outer suburbs, with fast sections beyond the centre.", background: "Its predecessor opened in 1863 as the world's first underground passenger railway." },
+  "hammersmith-city": { about: "Sub-surface route linking Hammersmith with Paddington, King's Cross, the City and east London.", background: "The route has nineteenth-century origins; Hammersmith & City became a separate line identity on the Tube map in 1990." },
+  "waterloo-city": { about: "Very short shuttle connecting Waterloo with Bank in the City, aimed mainly at commuter flows.", background: "Opened in 1898, it remains one of the shortest and most specialised lines on the network." }
+};
+
+const SURFACE_LINE_INFO = {
+  elizabeth: { about: "High-capacity east-west railway linking Reading and Heathrow with central London, Canary Wharf, Stratford and Shenfield.", background: "The central tunnels opened in 2022 as the Elizabeth line, creating a new cross-London railway named in honour of Queen Elizabeth II." },
+  lioness: { about: "London Overground route between Euston and Watford Junction through north-west London and Wembley.", background: "The Lioness name honours the England women's football team and its legacy, especially its 2022 European Championship triumph at Wembley." },
+  mildmay: { about: "London Overground route linking Richmond and Clapham Junction with Stratford through north and east London.", background: "The Mildmay name celebrates the charitable hospital known for caring for Londoners and for its important work during the HIV/AIDS crisis." },
+  windrush: { about: "London Overground route connecting Highbury & Islington with south and south-east London branches.", background: "The Windrush name honours Caribbean communities and the Windrush generation whose contribution has shaped modern London." },
+  weaver: { about: "London Overground services from Liverpool Street towards Enfield Town, Cheshunt and Chingford.", background: "The Weaver name reflects the textile and garment history of east London and the migrant communities that built those industries." },
+  suffragette: { about: "London Overground route between Gospel Oak and Barking Riverside across north and east London.", background: "The Suffragette name honours the East London movement for women's voting rights and working-class women's activism." },
+  liberty: { about: "Short London Overground route between Romford and Upminster in east London.", background: "The Liberty name refers to Havering's historic royal liberty and celebrates the area's tradition of local independence." },
+  dlr: { about: "Automated light metro serving Docklands, the City fringe, Stratford, Greenwich and east London.", background: "The Docklands Light Railway opened in 1987 and expanded alongside the regeneration of London's former docklands." },
+  tram: { about: "Street-running and segregated light-rail network centred on Croydon, linking south London communities with major rail interchanges.", background: "The modern London tram network opened in 2000, restoring tram operation to London after the original system had disappeared in the 1950s." },
+  national: { about: "National Rail service entering London from the wider UK rail network.", background: "London's mainline railways were built by several historic companies, leaving the capital with multiple major terminal stations and corridors." }
+};
+
+const STATION_BACKGROUND = {
+  paddington: { descriptor: "Airport gateway & major rail hub", about: "Major west London interchange for the Elizabeth line, Underground and National Rail, with direct rail access towards Heathrow and western England.", background: "The present Paddington terminus was designed by Isambard Kingdom Brunel and opened in the nineteenth century for the Great Western Railway." },
+  "kingscrossstpancras": { descriptor: "International & major rail hub", about: "One of London's biggest interchange complexes, connecting multiple Underground lines with King's Cross, St Pancras International and long-distance rail.", background: "King's Cross and St Pancras opened as neighbouring nineteenth-century termini; St Pancras later became London's Eurostar gateway." },
+  victoria: { descriptor: "Major rail & coach hub", about: "Central London interchange connecting National Rail, Underground and nearby coach services, useful for south London and Gatwick-bound travel.", background: "Victoria station developed in the 1860s as two adjoining termini and later became one of London's busiest transport hubs." },
+  waterloo: { descriptor: "Major rail hub", about: "Large south-bank terminus with extensive National Rail service and several Underground connections.", background: "Waterloo opened in 1848 and grew into Britain's largest station by platform count." },
+  euston: { descriptor: "Major intercity rail hub", about: "Central London terminus for West Coast services with nearby Underground connections.", background: "Euston opened in 1837 as London's first intercity railway terminus and has been rebuilt several times." },
+  liverpoolstreet: { descriptor: "Major rail & City hub", about: "Major City of London interchange for National Rail, Elizabeth line and Underground services.", background: "Liverpool Street station opened in 1874 and became a principal gateway for routes into east London and East Anglia." },
+  londonbridge: { descriptor: "Major rail & Underground hub", about: "Major interchange south of the Thames serving National Rail and the Jubilee and Northern lines.", background: "London Bridge is one of the capital's oldest railway termini, first opening in 1836." },
+  southkensington: { descriptor: "Museum district transfer station", about: "Key west-central London transfer station for Piccadilly, District and Circle services, close to Imperial College and the major South Kensington museums.", background: "The station opened in the nineteenth century with the early sub-surface railways; deep-level Piccadilly services arrived in the early twentieth century." },
+  heathrowterminals23: { descriptor: "Airport rail station", about: "Rail and Underground station serving Heathrow Terminals 2 and 3, with Elizabeth line and Piccadilly line connections to central London.", background: "Rail links to Heathrow expanded over several decades as the airport grew into the UK's largest international aviation hub." }
+};
+
+layerState.tram = false;
+
+let surfaceLineById = new Map();
+let surfaceGeometryRegistry = new Map();
+let surfaceStationRegistry = new Map();
+let surfaceRenderings = [];
+let surfaceStationOverlays = [];
+let surfaceLabelOverlays = [];
+let SurfaceStationOverlay;
+let SurfaceLineLabelOverlay;
+let surfaceCoreLoaded = false;
+let nationalRailLoaded = false;
+let nationalRailPromise = null;
+let transientTransportSelection = null;
+let persistentTransportFocus = null;
+let surfaceLabelRefreshTimer = null;
+
+function surfacePresetForApiLine(apiLine) {
+  const hay = normalizeSearch(`${apiLine?.id || ""} ${apiLine?.name || ""} ${apiLine?.modeName || ""}`);
+  let preset = SURFACE_LINE_PRESETS.find(item => hay.includes(item.key));
+
+  if (!preset && apiLine?.modeName === "national-rail") {
+    return {
+      id: `rail:nr:${apiLine.id}`,
+      apiId: apiLine.id,
+      code: "NR",
+      name: apiLine.name || apiLine.id,
+      displayName: apiLine.name || apiLine.id,
+      family: "rail",
+      kind: "national",
+      color: "#AAB2BD",
+      modeName: "national-rail"
+    };
+  }
+
+  if (!preset) return null;
+  return {
+    ...preset,
+    id: `${preset.family}:${preset.key}`,
+    apiId: apiLine.id,
+    modeName: apiLine.modeName
+  };
+}
+
+function surfaceLineSort(a, b) {
+  const rank = line => {
+    if (line.code?.startsWith("R")) return Number(line.code.slice(1)) || 50;
+    if (line.code?.startsWith("T")) return 100 + (Number(line.code.slice(1)) || 1);
+    return 200;
+  };
+  return rank(a) - rank(b) || String(a.name).localeCompare(String(b.name));
+}
+
+function formatSurfaceLineName(line) {
+  return `${line.code} · ${line.displayName || line.name}`;
+}
+
+function shouldIncludeNationalRailOperator(apiLine) {
+  const hay = normalizeSearch(`${apiLine?.id || ""} ${apiLine?.name || ""}`);
+  return NATIONAL_RAIL_OPERATOR_HINTS.some(hint => hay.includes(normalizeSearch(hint)));
+}
+
+function clearSurfaceNetwork() {
+  surfaceRenderings.forEach(item => item.polyline.setMap(null));
+  surfaceStationOverlays.forEach(item => item.setMap(null));
+  surfaceLabelOverlays.forEach(item => item.setMap(null));
+  surfaceRenderings = [];
+  surfaceStationOverlays = [];
+  surfaceLabelOverlays = [];
+  surfaceLineById = new Map();
+  surfaceGeometryRegistry = new Map();
+  surfaceStationRegistry = new Map();
+  surfaceCoreLoaded = false;
+  nationalRailLoaded = false;
+  nationalRailPromise = null;
+}
+
+async function loadTubeNetwork(force = false) {
+  await loadTubeNetworkCore(force);
+  linkSurfaceStationsToTube();
+  applyLayerState();
+}
+
+async function loadSurfaceNetworks(force = false) {
+  if (force) clearSurfaceNetwork();
+  if (surfaceCoreLoaded && !force) return;
+
+  try {
+    setNetworkStatus("Loading Rail + Tram network…");
+    const res = await fetch(`https://api.tfl.gov.uk/Line/Mode/${SURFACE_CORE_MODES}`);
+    if (!res.ok) throw new Error(`TfL surface-line request returned ${res.status}`);
+    const apiLines = await res.json();
+    const profiles = (Array.isArray(apiLines) ? apiLines : [])
+      .map(surfacePresetForApiLine)
+      .filter(Boolean)
+      .sort(surfaceLineSort);
+
+    const results = await Promise.allSettled(profiles.map(line => loadSurfaceLineData(line, force)));
+    results.filter(item => item.status === "fulfilled").forEach(item => ingestSurfaceLineData(item.value));
+    const failures = results.filter(item => item.status === "rejected");
+    if (failures.length) console.warn("Some Rail/Tram services failed to load", failures);
+
+    surfaceCoreLoaded = surfaceLineById.size > 0;
+    renderSurfaceLines();
+    buildSurfaceStationNodes();
+    rebuildSurfaceLabels();
+    linkSurfaceStationsToTube();
+    applyLayerState();
+    refreshSearchIfOpen();
+
+    setNetworkStatus(surfaceCoreLoaded ? "Transit ready · Metro + Rail + Tram" : "Metro ready · Rail/Tram unavailable", !surfaceCoreLoaded);
+  } catch (err) {
+    console.warn("Rail/Tram load failed", err);
+    setNetworkStatus("Metro ready · Rail/Tram unavailable", true);
+  }
+}
+
+async function ensureNationalRailLoaded(force = false) {
+  if (nationalRailLoaded && !force) return;
+  if (nationalRailPromise && !force) return nationalRailPromise;
+
+  nationalRailPromise = (async () => {
+    try {
+      const res = await fetch("https://api.tfl.gov.uk/Line/Mode/national-rail");
+      if (!res.ok) throw new Error(`National Rail request returned ${res.status}`);
+      const apiLines = await res.json();
+      const profiles = (Array.isArray(apiLines) ? apiLines : [])
+        .filter(shouldIncludeNationalRailOperator)
+        .map(surfacePresetForApiLine)
+        .filter(Boolean);
+
+      const results = await Promise.allSettled(profiles.map(line => loadSurfaceLineData(line, force)));
+      results.filter(item => item.status === "fulfilled").forEach(item => ingestSurfaceLineData(item.value));
+      nationalRailLoaded = true;
+      renderSurfaceLines();
+      buildSurfaceStationNodes();
+      rebuildSurfaceLabels();
+      linkSurfaceStationsToTube();
+      applyLayerState();
+      refreshSearchIfOpen();
+      showToast("National Rail corridors added.", 1800);
+    } catch (err) {
+      console.warn("National Rail load failed", err);
+      showToast("National Rail data is temporarily unavailable.", 3200);
+    } finally {
+      nationalRailPromise = null;
+    }
+  })();
+
+  return nationalRailPromise;
+}
+
+async function loadSurfaceLineData(line, force = false) {
+  const cacheKey = `${SURFACE_CACHE_PREFIX}${line.apiId}`;
+  if (!force) {
+    const cached = getCache(cacheKey);
+    if (cached) return { line, ...cached };
+  }
+
+  const sequenceUrl = `https://api.tfl.gov.uk/Line/${encodeURIComponent(line.apiId)}/Route/Sequence/all?serviceTypes=Regular&excludeCrowding=true`;
+  const stopsUrl = `https://api.tfl.gov.uk/Line/${encodeURIComponent(line.apiId)}/StopPoints`;
+  const [sequenceRes, stopsRes] = await Promise.all([
+    fetch(sequenceUrl, { headers: { Accept: "application/json" } }),
+    fetch(stopsUrl, { headers: { Accept: "application/json" } })
+  ]);
+
+  if (!sequenceRes.ok || !stopsRes.ok) throw new Error(`TfL request failed for ${line.displayName}`);
+  const sequence = await sequenceRes.json();
+  const stops = await stopsRes.json();
+
+  let geometries = [];
+  for (const encoded of (sequence.lineStrings || [])) {
+    for (const path of parseLineString(encoded)) {
+      const smoothed = line.kind === "tram" ? smoothGeographicPath(path, 3) : smoothGeographicPath(path, 4);
+      if (line.kind === "national") geometries.push(...clipPathToLondon(smoothed));
+      else geometries.push(smoothed);
+    }
+  }
+
+  const simplified = {
+    geometries,
+    stops: (Array.isArray(stops) ? stops : []).map(stop => ({
+      id: stop.id,
+      stationNaptan: stop.stationNaptan,
+      hubNaptanCode: stop.hubNaptanCode,
+      name: stop.commonName || stop.name || "Station",
+      lat: stop.lat,
+      lon: stop.lon,
+      modes: stop.modes || []
+    })).filter(stop => Number.isFinite(stop.lat) && Number.isFinite(stop.lon))
+  };
+
+  setCache(cacheKey, simplified);
+  return { line, ...simplified };
+}
+
+function clipPathToLondon(path) {
+  const result = [];
+  let current = [];
+  const inside = point => point.lat >= LONDON_RAIL_BOUNDS.south && point.lat <= LONDON_RAIL_BOUNDS.north && point.lng >= LONDON_RAIL_BOUNDS.west && point.lng <= LONDON_RAIL_BOUNDS.east;
+
+  for (let i = 0; i < path.length; i++) {
+    const point = path[i];
+    if (inside(point)) {
+      if (!current.length && i > 0) current.push(path[i - 1]);
+      current.push(point);
+    } else if (current.length) {
+      current.push(point);
+      if (current.length >= 2) result.push(current);
+      current = [];
+    }
+  }
+  if (current.length >= 2) result.push(current);
+  return result;
+}
+
+function ingestSurfaceLineData(data) {
+  const { line, geometries, stops } = data;
+  surfaceLineById.set(line.id, line);
+  const existingGeometry = surfaceGeometryRegistry.get(line.id) || [];
+  existingGeometry.push(...(geometries || []));
+  surfaceGeometryRegistry.set(line.id, existingGeometry);
+
+  for (const stop of (stops || [])) {
+    if (line.kind === "national" && !pointInsideLondon(stop)) continue;
+    const key = stop.hubNaptanCode || stop.stationNaptan || stop.id || `${normalizeStationName(stop.name)}-${stop.lat.toFixed(4)}-${stop.lon.toFixed(4)}`;
+    const existing = surfaceStationRegistry.get(key) || {
+      id: key,
+      name: cleanStationName(stop.name),
+      lat: stop.lat,
+      lon: stop.lon,
+      modes: new Set(stop.modes || []),
+      services: []
+    };
+    if (!existing.services.some(service => service.id === line.id)) existing.services.push(line);
+    (stop.modes || []).forEach(mode => existing.modes.add(mode));
+    surfaceStationRegistry.set(key, existing);
+  }
+}
+
+function pointInsideLondon(point) {
+  return Number(point.lat) >= LONDON_RAIL_BOUNDS.south && Number(point.lat) <= LONDON_RAIL_BOUNDS.north && Number(point.lon ?? point.lng) >= LONDON_RAIL_BOUNDS.west && Number(point.lon ?? point.lng) <= LONDON_RAIL_BOUNDS.east;
+}
+
+function initSurfaceOverlayClasses() {
+  if (SurfaceStationOverlay) return;
+
+  SurfaceStationOverlay = class SurfaceStationOverlay extends HtmlOverlay {
+    constructor(station) {
+      const primaryFamily = station.services.some(service => service.family === "tram") && !station.services.some(service => service.family === "rail") ? "tram" : "rail";
+      super({ lat: station.lat, lng: station.lon }, `surface-station-node ${primaryFamily}-station-node`);
+      this.station = station;
+    }
+
+    onAdd() {
+      super.onAdd();
+      const services = this.station.services.slice().sort(surfaceLineSort);
+      this.div.style.setProperty("--station-color", surfaceStationNodeBackground(services));
+      this.div.style.background = surfaceStationNodeBackground(services);
+      this.div.classList.toggle("multi-service", services.length > 1);
+      this.div.title = `${this.station.name} — ${services.map(formatSurfaceLineName).join(" · ")}`;
+      this.div.innerHTML = `
+        <div class="station-hover-card">
+          <div class="station-hover-title">${escapeHtml(this.station.name)}</div>
+          ${services.map(line => `<div class="station-hover-line"><i class="station-hover-swatch" style="background:${line.color}"></i><span>${escapeHtml(formatSurfaceLineName(line))}</span></div>`).join("")}
+        </div>`;
+      this.div.addEventListener("click", event => {
+        event.stopPropagation();
+        selectSurfaceStation(this.station, { showInfo: true });
+      });
+    }
+
+    draw() {
+      if (!this.div) return;
+      const projection = this.getProjection();
+      const point = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.position));
+      if (!point) return;
+      this.div.style.left = `${point.x}px`;
+      this.div.style.top = `${point.y}px`;
+      this.div.style.display = this.visible ? "" : "none";
+    }
+  };
+
+  SurfaceLineLabelOverlay = class SurfaceLineLabelOverlay extends LineLabelOverlay {
+    onAdd() {
+      super.onAdd();
+      this.div.classList.add("surface-line-label");
+      this.div.classList.add(this.line.family === "tram" ? "tram-line-label" : "rail-line-label");
+    }
+  };
+}
+
+function surfaceStationNodeBackground(services) {
+  if (!services?.length) return "#D7DCE3";
+  if (services.length === 1) return services[0].color;
+  const step = 100 / services.length;
+  const stops = services.flatMap((service, index) => [`${service.color} ${(index * step).toFixed(2)}%`, `${service.color} ${((index + 1) * step).toFixed(2)}%`]);
+  return `conic-gradient(${stops.join(",")})`;
+}
+
+function renderSurfaceLines() {
+  surfaceRenderings.forEach(item => item.polyline.setMap(null));
+  surfaceRenderings = [];
+
+  for (const line of [...surfaceLineById.values()].sort(surfaceLineSort)) {
+    const geometries = surfaceGeometryRegistry.get(line.id) || [];
+    for (const path of geometries) {
+      if (!Array.isArray(path) || path.length < 2) continue;
+      renderSurfacePath(line, path);
+    }
+  }
+}
+
+function renderSurfacePath(line, path) {
+  if (line.kind === "tram") {
+    const band = new google.maps.Polyline({ map, path, strokeColor: line.color, strokeOpacity: 0, strokeWeight: 9, zIndex: 24, clickable: false, visible: false });
+    const main = new google.maps.Polyline({ map, path, strokeColor: line.color, strokeOpacity: 0, strokeWeight: 2.8, zIndex: 25, clickable: false, visible: false });
+    surfaceRenderings.push({ polyline: band, line, role: "tram-band" }, { polyline: main, line, role: "main" });
+  } else if (line.kind === "dlr") {
+    const dashed = new google.maps.Polyline({
+      map, path, strokeOpacity: 0, strokeWeight: 0, zIndex: 26, clickable: false, visible: false,
+      icons: [{ icon: { path: "M 0,-1 0,1", strokeColor: line.color, strokeOpacity: 1, strokeWeight: 3.2, scale: 3 }, offset: "0", repeat: "14px" }]
+    });
+    surfaceRenderings.push({ polyline: dashed, line, role: "dlr-dash" });
+  } else {
+    const outer = new google.maps.Polyline({ map, path, strokeColor: line.color, strokeOpacity: 0, strokeWeight: line.kind === "national" ? 5 : 7, zIndex: 24, clickable: false, visible: false });
+    const inner = new google.maps.Polyline({ map, path, strokeColor: "#0B1017", strokeOpacity: 0, strokeWeight: line.kind === "national" ? 2 : 2.8, zIndex: 25, clickable: false, visible: false });
+    surfaceRenderings.push({ polyline: outer, line, role: "rail-outer" }, { polyline: inner, line, role: "rail-inner" });
+  }
+
+  const hit = new google.maps.Polyline({ map, path, strokeColor: line.color, strokeOpacity: 0.001, strokeWeight: 20, zIndex: 60, clickable: true, visible: false });
+  hit.addListener("click", () => selectSurfaceLine(line.id, { showInfo: true }));
+  surfaceRenderings.push({ polyline: hit, line, role: "hit" });
+}
+
+function buildSurfaceStationNodes() {
+  surfaceStationOverlays.forEach(item => item.setMap(null));
+  surfaceStationOverlays = [];
+  for (const station of surfaceStationRegistry.values()) {
+    station.services.sort(surfaceLineSort);
+    const overlay = new SurfaceStationOverlay(station);
+    overlay.setMap(map);
+    overlay.setVisible(false);
+    surfaceStationOverlays.push(overlay);
+  }
+}
+
+function rebuildSurfaceLabels() {
+  surfaceLabelOverlays.forEach(item => item.setMap(null));
+  surfaceLabelOverlays = [];
+  if (!map) return;
+  const zoom = map.getZoom() || 12;
+  const spacing = Math.max(1.6, lineLabelSpacingKm(zoom) * 1.2);
+
+  for (const line of surfaceLineById.values()) {
+    let count = 0;
+    const seen = new Set();
+    for (const path of (surfaceGeometryRegistry.get(line.id) || [])) {
+      for (const sample of samplePathForLabels(path, spacing)) {
+        const key = `${Math.round(sample.position.lat / 0.007)}:${Math.round(sample.position.lng / 0.010)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const label = new SurfaceLineLabelOverlay(sample.position, sample.nextPosition, line);
+        label.setMap(map);
+        label.setVisible(false);
+        surfaceLabelOverlays.push(label);
+        count += 1;
+        if (count >= (line.kind === "national" ? 10 : 24)) break;
+      }
+      if (count >= (line.kind === "national" ? 10 : 24)) break;
+    }
+  }
+}
+
+function scheduleLineLabelRefresh() {
+  clearTimeout(lineLabelRefreshTimer);
+  clearTimeout(surfaceLabelRefreshTimer);
+  lineLabelRefreshTimer = setTimeout(() => { if (lineGeometryRegistry.size) rebuildLineLabels(); }, 180);
+  surfaceLabelRefreshTimer = setTimeout(() => { if (surfaceGeometryRegistry.size) { rebuildSurfaceLabels(); applyLayerState(); } }, 220);
+}
+
+function linkSurfaceStationsToTube() {
+  for (const station of stationRegistry.values()) station.surfaceServices = [];
+  stationOverlays.forEach(overlay => { overlay.station.surfaceServices = []; });
+
+  const tubeStations = [...stationRegistry.values()];
+  for (const station of surfaceStationRegistry.values()) {
+    station.tubeStationId = null;
+    let best = null;
+    let bestDistance = Infinity;
+    const surfaceName = looseStationKey(station.name);
+
+    for (const tube of tubeStations) {
+      const tubeName = looseStationKey(tube.name);
+      const nameCompatible = surfaceName === tubeName || surfaceName.includes(tubeName) || tubeName.includes(surfaceName);
+      if (!nameCompatible) continue;
+      const distance = haversineKm({ lat: station.lat, lng: station.lon }, { lat: tube.lat, lng: tube.lon });
+      if (distance < bestDistance && distance <= 0.42) {
+        bestDistance = distance;
+        best = tube;
+      }
+    }
+
+    if (!best) continue;
+    station.tubeStationId = best.id;
+    for (const service of station.services) {
+      if (!best.surfaceServices.some(item => item.id === service.id)) best.surfaceServices.push(service);
+    }
+    const overlay = stationOverlays.find(item => item.station.id === best.id);
+    if (overlay) {
+      overlay.station.surfaceServices = best.surfaceServices.slice();
+      overlay.div?.classList.toggle("surface-transfer", best.surfaceServices.length > 0);
+    }
+  }
+}
+
+function looseStationKey(name) {
+  return normalizeStationName(name).replace(/^london/, "").replace(/international$/, "");
+}
+
+function getTransportSelection() {
+  return persistentTransportFocus || transientTransportSelection;
+}
+
+function clearTransientTransportSelection() {
+  if (!transientTransportSelection) return;
+  transientTransportSelection = null;
+  applyLayerState();
+}
+
+function clearPersistentTransportFocus() {
+  if (!persistentTransportFocus) return;
+  persistentTransportFocus = null;
+  updateItemFocusChip();
+  applyLayerState();
+}
+
+function setPersistentTransportFocus(selection) {
+  persistentTransportFocus = { ...selection };
+  transientTransportSelection = null;
+  activeFavoriteRouteId = null;
+  updateRouteFocusChip();
+  updateItemFocusChip();
+  applyLayerState();
+}
+
+function updateItemFocusChip() {
+  const chip = el("item-focus-chip");
+  if (!chip) return;
+  const selection = persistentTransportFocus;
+  chip.classList.toggle("hidden", !selection);
+  const name = chip.querySelector("[data-item-focus-name]");
+  if (name) name.textContent = selection ? selection.label : "";
+}
+
+function selectMetroLine(lineId, options = {}) {
+  const line = TUBE_LINE_BY_ID.get(lineId);
+  if (!line) return;
+  activeFavoriteRouteId = null;
+  persistentTransportFocus = null;
+  updateRouteFocusChip();
+  updateItemFocusChip();
+  transientTransportSelection = { type: "line", family: "metro", id: lineId, label: formatLineName(line) };
+  applyLayerState();
+  if (options.fit) focusTubeLine(lineId);
+  if (options.showInfo !== false) showLineInfo(line);
+}
+
+function selectSurfaceLine(lineId, options = {}) {
+  const line = surfaceLineById.get(lineId);
+  if (!line) return;
+  activeFavoriteRouteId = null;
+  persistentTransportFocus = null;
+  updateRouteFocusChip();
+  updateItemFocusChip();
+  transientTransportSelection = { type: "line", family: line.family, id: lineId, label: formatSurfaceLineName(line) };
+  applyLayerState();
+  if (options.fit) focusSurfaceLine(lineId);
+  if (options.showInfo !== false) showSurfaceLineInfo(line);
+}
+
+function selectTubeStation(station, options = {}) {
+  activeFavoriteRouteId = null;
+  persistentTransportFocus = null;
+  updateRouteFocusChip();
+  updateItemFocusChip();
+  transientTransportSelection = { type: "station", family: "metro", id: station.id, label: station.name, station };
+  applyLayerState();
+  if (options.showInfo !== false) showStationInfo(station);
+}
+
+function selectSurfaceStation(station, options = {}) {
+  activeFavoriteRouteId = null;
+  persistentTransportFocus = null;
+  updateRouteFocusChip();
+  updateItemFocusChip();
+  transientTransportSelection = { type: "station", family: station.services.some(item => item.family === "rail") ? "rail" : "tram", id: station.id, label: station.name, station };
+  applyLayerState();
+  if (options.showInfo !== false) showSurfaceStationInfo(station);
+}
+
+function focusSurfaceLine(lineId) {
+  const geometries = surfaceGeometryRegistry.get(lineId) || [];
+  if (!geometries.length) return;
+  const bounds = new google.maps.LatLngBounds();
+  geometries.flat().forEach(point => bounds.extend(point));
+  if (!bounds.isEmpty()) map.fitBounds(bounds, 44);
+}
+
+function transportSelectionMatchesMetroLine(selection, lineId) {
+  return selection?.type === "line" && selection.family === "metro" && selection.id === lineId;
+}
+
+function transportSelectionMatchesSurfaceLine(selection, lineId) {
+  return selection?.type === "line" && (selection.family === "rail" || selection.family === "tram") && selection.id === lineId;
+}
+
+function routeSurfaceLineIds(route) {
+  const ids = [];
+  for (const segment of (route?.segments || [])) {
+    if (!["rail", "tram"].includes(segment.mode) || segment.kind === "station") continue;
+    if (surfaceLineById.has(segment.service)) {
+      ids.push(segment.service);
+      continue;
+    }
+    const q = normalizeSearch(segment.service || segment.label || "");
+    const match = [...surfaceLineById.values()].find(line => normalizeSearch(`${line.code} ${line.name} ${line.displayName} ${line.apiId}`).includes(q) || q.includes(normalizeSearch(line.name)));
+    if (match) ids.push(match.id);
+  }
+  return [...new Set(ids)];
+}
+
+function routeStationSegments(route) {
+  return (route?.segments || []).filter(segment => segment.kind === "station" && Number.isFinite(Number(segment.lat)) && Number.isFinite(Number(segment.lng)));
+}
+
+function activateFavoriteRoute(routeId, options = {}) {
+  const route = favoriteRoutes.find(item => item.id === routeId);
+  if (!route) return;
+  activeFavoriteRouteId = route.id;
+  transientTransportSelection = null;
+  persistentTransportFocus = null;
+  selectedMetroLineId = null;
+  route.useCount = Number(route.useCount || 0) + 1;
+  route.lastUsedAt = Date.now();
+  saveFavoriteRoutes();
+
+  const metroLines = routeMetroLineIds(route);
+  const surfaceLines = routeSurfaceLineIds(route);
+  layerState.metro = metroLines.length > 0;
+  layerState.rail = surfaceLines.some(id => surfaceLineById.get(id)?.family === "rail");
+  layerState.tram = surfaceLines.some(id => surfaceLineById.get(id)?.family === "tram");
+  layerState.places = false;
+
+  applyLayerState();
+  updateRouteFocusChip();
+  updateItemFocusChip();
+  focusFavoriteRoute(route);
+  if (options.showInfo !== false) showFavoriteRouteInfo(route);
+  refreshSearchIfOpen();
+}
+
+function focusFavoriteRoute(route) {
+  const bounds = new google.maps.LatLngBounds();
+  routeMetroLineIds(route).forEach(id => (lineGeometryRegistry.get(id) || []).flat().forEach(point => bounds.extend(point)));
+  routeSurfaceLineIds(route).forEach(id => (surfaceGeometryRegistry.get(id) || []).flat().forEach(point => bounds.extend(point)));
+  routeStationSegments(route).forEach(segment => bounds.extend({ lat: Number(segment.lat), lng: Number(segment.lng) }));
+  if (!bounds.isEmpty()) map.fitBounds(bounds, 48);
+}
+
+function clearFavoriteRouteFocus() {
+  if (!activeFavoriteRouteId) return;
+  activeFavoriteRouteId = null;
+  updateRouteFocusChip();
+  applyLayerState();
+}
+
+function toggleLayer(name) {
+  activeFavoriteRouteId = null;
+  transientTransportSelection = null;
+  persistentTransportFocus = null;
+  updateRouteFocusChip();
+  updateItemFocusChip();
+  layerState[name] = !layerState[name];
+  applyLayerState();
+
+  if (name === "rail" && layerState.rail && !nationalRailLoaded) {
+    showToast("Loading major National Rail corridors in the background…", 2200);
+    ensureNationalRailLoaded();
+  }
+}
+
+function applyLayerState() {
+  const route = getActiveFavoriteRoute();
+  const selection = getTransportSelection();
+  const routeMetro = new Set(routeMetroLineIds(route));
+  const routeSurface = new Set(routeSurfaceLineIds(route));
+  const routeStations = new Set(routeStationSegments(route).map(segment => segment.stationId));
+  const hasRoute = !!route;
+  const hasSelection = !!selection;
+
+  const normalMetroVisible = layerState.metro && !hasRoute && !hasSelection;
+  const metroFocus = normalMetroVisible && !layerState.rail && !layerState.tram && !layerState.places;
+  const metroMode = metroFocus ? "focus" : "minimal";
+
+  lineRenderings.forEach(item => {
+    const { polyline, line, role } = item;
+    let visible = false;
+    let strong = false;
+
+    if (hasSelection) {
+      visible = transportSelectionMatchesMetroLine(selection, line.id);
+      strong = visible;
+    } else if (hasRoute) {
+      visible = routeMetro.has(line.id);
+      strong = visible;
+    } else {
+      visible = layerState.metro;
+      strong = metroFocus;
+    }
+
+    polyline.setVisible(visible);
+    if (!visible) return;
+    if (role === "hit") {
+      polyline.setOptions({ strokeOpacity: 0.001, strokeWeight: 20, zIndex: 72 });
+    } else if (role === "casing") {
+      polyline.setOptions({ strokeOpacity: strong ? 0.92 : 0.18, strokeWeight: strong ? 9 : 4.6, zIndex: strong ? 43 : 12 });
+    } else {
+      polyline.setOptions({ strokeOpacity: strong ? 0.98 : 0.20, strokeWeight: strong ? 6.4 : 2.8, zIndex: strong ? 45 : 13 });
+    }
+  });
+
+  stationOverlays.forEach(overlay => {
+    let visible = false;
+    if (hasSelection) {
+      if (selection.type === "line" && selection.family === "metro") visible = overlay.station.lines.some(line => line.id === selection.id);
+      if (selection.type === "station" && selection.family === "metro") visible = overlay.station.id === selection.id;
+    } else if (hasRoute) {
+      visible = overlay.station.lines.some(line => routeMetro.has(line.id)) || routeStations.has(overlay.station.id);
+    } else {
+      visible = layerState.metro;
+    }
+    overlay.setVisible(visible);
+    overlay.setMode(hasSelection || hasRoute || metroFocus ? "focus" : metroMode);
+    overlay.setHighlightedLines(null);
+  });
+
+  lineLabelOverlays.forEach(overlay => {
+    let visible = false;
+    if (hasSelection) visible = selection.type === "line" && selection.family === "metro" && selection.id === overlay.line.id;
+    else if (hasRoute) visible = routeMetro.has(overlay.line.id);
+    else visible = layerState.metro;
+    overlay.setVisible(visible);
+    overlay.setMode(hasSelection || hasRoute || metroFocus ? "focus" : metroMode);
+    overlay.setHighlightedLines(null);
+  });
+
+  surfaceRenderings.forEach(item => {
+    const { polyline, line, role } = item;
+    let visible = false;
+    let strong = false;
+    if (hasSelection) {
+      visible = transportSelectionMatchesSurfaceLine(selection, line.id);
+      strong = visible;
+    } else if (hasRoute) {
+      visible = routeSurface.has(line.id);
+      strong = visible;
+    } else {
+      visible = line.family === "rail" ? layerState.rail : layerState.tram;
+      strong = visible;
+    }
+    polyline.setVisible(visible);
+    if (!visible) return;
+    applySurfacePolylineStyle(item, strong, hasSelection || hasRoute);
+  });
+
+  surfaceStationOverlays.forEach(overlay => {
+    const station = overlay.station;
+    let visible = false;
+    if (hasSelection) {
+      if (selection.type === "line" && ["rail", "tram"].includes(selection.family)) visible = station.services.some(service => service.id === selection.id);
+      if (selection.type === "station" && ["rail", "tram"].includes(selection.family)) visible = station.id === selection.id;
+    } else if (hasRoute) {
+      visible = station.services.some(service => routeSurface.has(service.id)) || routeStations.has(station.id);
+    } else {
+      visible = station.services.some(service => service.family === "rail" ? layerState.rail : layerState.tram);
+      if (visible && station.tubeStationId && layerState.metro) visible = false;
+    }
+    overlay.setVisible(visible);
+  });
+
+  surfaceLabelOverlays.forEach(overlay => {
+    const line = overlay.line;
+    let visible = false;
+    if (hasSelection) visible = selection.type === "line" && selection.id === line.id;
+    else if (hasRoute) visible = routeSurface.has(line.id);
+    else visible = line.family === "rail" ? layerState.rail : layerState.tram;
+    overlay.setVisible(visible);
+    overlay.setMode("focus");
+    overlay.setHighlightedLines(null);
+  });
+
+  placeOverlays.forEach(overlay => overlay.setVisible(layerState.places && !hasRoute && !hasSelection));
+
+  setLayerButtonState("metro", layerState.metro && !hasRoute && !hasSelection);
+  setLayerButtonState("rail", layerState.rail && !hasRoute && !hasSelection);
+  setLayerButtonState("tram", layerState.tram && !hasRoute && !hasSelection);
+  setLayerButtonState("places", layerState.places && !hasRoute && !hasSelection);
+
+  updateRouteFocusChip();
+  updateItemFocusChip();
+  applyBaseMapStyle();
+}
+
+function applySurfacePolylineStyle(item, strong = true, focused = false) {
+  const { polyline, line, role } = item;
+  const opacity = focused ? 1 : 0.88;
+  if (role === "hit") {
+    polyline.setOptions({ strokeOpacity: 0.001, strokeWeight: 20, zIndex: 72 });
+    return;
+  }
+  if (role === "tram-band") {
+    polyline.setOptions({ strokeOpacity: focused ? 0.44 : 0.30, strokeWeight: focused ? 11 : 8, zIndex: 24 });
+    return;
+  }
+  if (role === "main") {
+    polyline.setOptions({ strokeOpacity: opacity, strokeWeight: focused ? 3.5 : 2.8, zIndex: 26 });
+    return;
+  }
+  if (role === "dlr-dash") {
+    polyline.setOptions({ zIndex: focused ? 47 : 27 });
+    return;
+  }
+  if (role === "rail-outer") {
+    polyline.setOptions({ strokeOpacity: opacity, strokeWeight: line.kind === "national" ? (focused ? 6 : 5) : (focused ? 9 : 7), zIndex: focused ? 46 : 24 });
+    return;
+  }
+  if (role === "rail-inner") {
+    polyline.setOptions({ strokeOpacity: focused ? 0.96 : 0.86, strokeWeight: line.kind === "national" ? 2 : 2.8, zIndex: focused ? 47 : 25 });
+  }
+}
+
+function setLayerButtonState(name, active) {
+  const button = el(`${name}-btn`);
+  if (!button) return;
+  button.classList.toggle("active", !!active);
+  button.setAttribute("aria-pressed", String(!!active));
+}
+
+function applyBaseMapStyle() {
+  if (!map || activeMapType !== "roadmap") return;
+  const selection = getTransportSelection();
+  const metroFocus = !selection && !getActiveFavoriteRoute() && layerState.metro && !layerState.rail && !layerState.tram && !layerState.places;
+  map.setOptions({ styles: metroFocus ? METRO_FOCUS_MAP_STYLES : [] });
+}
+
+function initMap() {
+  map = new google.maps.Map(el("map"), {
+    center: LONDON_CENTER,
+    zoom: 12.4,
+    minZoom: 9,
+    maxZoom: 21,
+    mapTypeId: google.maps.MapTypeId.ROADMAP,
+    colorScheme: "DARK",
+    renderingType: google.maps.RenderingType?.VECTOR,
+    clickableIcons: false,
+    gestureHandling: "greedy",
+    fullscreenControl: false,
+    streetViewControl: false,
+    mapTypeControl: false,
+    rotateControl: false,
+    scaleControl: true,
+    zoomControl: true,
+    cameraControl: false,
+    backgroundColor: "#0b1017"
+  });
+
+  trafficLayer = new google.maps.TrafficLayer();
+  geocoder = new google.maps.Geocoder();
+  initSurfaceOverlayClasses();
+  createPlaceMarkers();
+  loadTubeNetwork();
+  loadSurfaceNetworks();
+  applyLayerState();
+
+  map.addListener("click", event => {
+    if (pendingTapPlace && event.latLng) {
+      pendingTapPlace = false;
+      openPlaceEditor({ lat: event.latLng.lat(), lng: event.latLng.lng() });
+      return;
+    }
+    closeDetail();
+    closeAddSheet();
+    hideSearchResults();
+  });
+
+  map.addListener("zoom_changed", scheduleLineLabelRefresh);
+  map.addListener("dragstart", () => {
+    if (userLocationWatchId !== null) {
+      followUserLocation = false;
+      updateLocationButton();
+    }
+  });
+  map.addListener("maptypeid_changed", () => {
+    activeMapType = map.getMapTypeId();
+    applyBaseMapStyle();
+  });
+  setNetworkStatus("Loading London transport…");
+}
+
+function showMapInfo() {
+  const active = [];
+  if (layerState.metro) active.push("Metro");
+  if (layerState.rail) active.push("Rail");
+  if (layerState.tram) active.push("Tram");
+  if (layerState.places) active.push("Places");
+  const content = el("detail-content");
+  content.innerHTML = `
+    <div class="detail-label">MAP INFORMATION</div>
+    <h2>${active.length ? escapeHtml(active.join(" + ")) : "Vanilla Google Maps"}</h2>
+    <div class="sub">v1.3D adds London rail and tram overlays plus temporary and persistent transport focus.</div>
+    <div class="detail-section">
+      <div class="info-row"><span>Metro</span><b>${layerState.metro ? "On" : "Off"}</b></div>
+      <div class="info-row"><span>Rail</span><b>${layerState.rail ? "On" : "Off"}</b></div>
+      <div class="info-row"><span>Tram</span><b>${layerState.tram ? "On" : "Off"}</b></div>
+      <div class="info-row"><span>Frequent Places</span><b>${layerState.places ? "On" : "Off"}</b></div>
+      <div class="info-row"><span>Loaded Rail/Tram services</span><b>${surfaceLineById.size}</b></div>
+    </div>
+    <div class="detail-section sub">M = Underground learning aliases. R = London urban rail. NR = National Rail. T = Tram.</div>`;
+  openDetail();
+}
+
+function showLineInfo(line) {
+  const profile = TUBE_LINE_INFO[line.id] || {};
+  const stationCount = [...stationRegistry.values()].filter(station => station.lines.some(item => item.id === line.id)).length;
+  const content = el("detail-content");
+  content.innerHTML = transportInfoHtml({
+    label: "METRO LINE",
+    title: formatLineName(line),
+    subtitle: "London Underground",
+    about: profile.about || `${line.name} is part of the London Underground network.`,
+    background: profile.background || "This line developed as part of London's expanding Underground network.",
+    facts: [
+      ["Learning alias", line.code], ["Official name", line.name], ["Stations on map", stationCount || "—"]
+    ],
+    focusLabel: "Focus line",
+    routeLabel: "Add line to Route"
+  });
+  bindTransportInfoActions(
+    () => setPersistentTransportFocus({ type: "line", family: "metro", id: line.id, label: formatLineName(line) }),
+    () => startRouteWithSegment({ mode: "metro", service: line.id, kind: "line", label: formatLineName(line) })
+  );
+  openDetail();
+}
+
+function showSurfaceLineInfo(line) {
+  const profile = surfaceInfoForLine(line);
+  const stationCount = [...surfaceStationRegistry.values()].filter(station => station.services.some(item => item.id === line.id)).length;
+  const content = el("detail-content");
+  const type = line.kind === "tram" ? "TRAM LINE" : line.kind === "national" ? "NATIONAL RAIL" : "RAIL LINE";
+  content.innerHTML = transportInfoHtml({
+    label: type,
+    title: formatSurfaceLineName(line),
+    subtitle: line.kind === "dlr" ? "Docklands Light Railway · Automated Rail" : line.kind === "overground" ? "London Overground" : line.kind === "national" ? "National Rail operator" : line.kind === "elizabeth" ? "Cross-London railway" : "London Trams",
+    about: profile.about,
+    background: profile.background,
+    facts: [["Map code", line.code], ["Official name", line.displayName || line.name], ["Stations on map", stationCount || "—"]],
+    focusLabel: "Focus line",
+    routeLabel: "Add line to Route"
+  });
+  bindTransportInfoActions(
+    () => setPersistentTransportFocus({ type: "line", family: line.family, id: line.id, label: formatSurfaceLineName(line) }),
+    () => startRouteWithSegment({ mode: line.family === "tram" ? "tram" : "rail", service: line.id, kind: "line", label: formatSurfaceLineName(line) })
+  );
+  openDetail();
+}
+
+function surfaceInfoForLine(line) {
+  if (line.kind === "national") return SURFACE_LINE_INFO.national;
+  return SURFACE_LINE_INFO[line.key] || SURFACE_LINE_INFO[line.kind] || SURFACE_LINE_INFO[line.name?.toLowerCase()] || { about: `${line.displayName || line.name} is part of London's surface transport network.`, background: "This service forms part of London's modern rail network." };
+}
+
+function transportInfoHtml({ label, title, subtitle, about, background, facts = [], focusLabel, routeLabel }) {
+  return `
+    <div class="detail-label">${escapeHtml(label)}</div>
+    <h2>${escapeHtml(title)}</h2>
+    <div class="sub">${escapeHtml(subtitle)}</div>
+    <div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(about)}</p></div>
+    <div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>${escapeHtml(background)}</p></div>
+    <div class="detail-section">${facts.map(([name, value]) => `<div class="info-row"><span>${escapeHtml(name)}</span><b>${escapeHtml(String(value))}</b></div>`).join("")}</div>
+    <div class="detail-actions compact-action-row">
+      <button class="secondary-btn compact-btn" id="focus-transport-btn">${escapeHtml(focusLabel)}</button>
+      <button class="primary-btn compact-btn" id="route-add-transport-btn">${escapeHtml(routeLabel)}</button>
+    </div>`;
+}
+
+function bindTransportInfoActions(focusAction, routeAction) {
+  el("detail-content").querySelector("#focus-transport-btn")?.addEventListener("click", () => { focusAction(); showToast("Focus stays active until you tap Exit focus."); });
+  el("detail-content").querySelector("#route-add-transport-btn")?.addEventListener("click", routeAction);
+}
+
+async function showStationInfo(station) {
+  selectTubeStationSilentlyIfNeeded(station);
+  const lines = (station.lines || []).slice().sort(compareTubeLines);
+  const surface = (station.surfaceServices || []).slice().sort(surfaceLineSort);
+  const profile = stationProfile(station.name, [...lines, ...surface]);
+  const content = el("detail-content");
+  content.innerHTML = `
+    <div class="detail-label">${lines.length > 1 || surface.length ? "TRANSFER STATION" : "METRO STATION"}</div>
+    <h2>${escapeHtml(station.name)}</h2>
+    <div class="sub">${escapeHtml(profile.descriptor)}</div>
+    <div class="chips">
+      ${lines.map(line => `<button class="line-chip line-chip-button" data-metro-line-id="${escapeHtml(line.id)}" style="background:${line.color};color:${idealTextColor(line.color)}">${escapeHtml(formatLineName(line))}</button>`).join("")}
+      ${surface.map(line => `<button class="line-chip line-chip-button" data-surface-line-id="${escapeHtml(line.id)}" style="background:${line.color};color:${idealTextColor(line.color)}">${escapeHtml(formatSurfaceLineName(line))}</button>`).join("")}
+    </div>
+    <div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(profile.about)}</p></div>
+    <div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>${escapeHtml(profile.background)}</p></div>
+    <div class="detail-section"><div class="detail-label">BUS INTEGRATION</div><div id="bus-info" class="sub">Checking nearby bus stops…</div></div>
+    <div class="detail-actions compact-action-row">
+      <button class="secondary-btn compact-btn" id="focus-station-btn">Focus station</button>
+      <button class="primary-btn compact-btn" id="route-add-station-btn">Add station to Route</button>
+    </div>`;
+  openDetail();
+
+  content.querySelectorAll("[data-metro-line-id]").forEach(button => button.addEventListener("click", () => selectMetroLine(button.dataset.metroLineId, { showInfo: true })));
+  content.querySelectorAll("[data-surface-line-id]").forEach(button => button.addEventListener("click", () => selectSurfaceLine(button.dataset.surfaceLineId, { showInfo: true })));
+  content.querySelector("#focus-station-btn")?.addEventListener("click", () => setPersistentTransportFocus({ type: "station", family: "metro", id: station.id, label: station.name, station }));
+  content.querySelector("#route-add-station-btn")?.addEventListener("click", () => startRouteWithSegment({ mode: "metro", service: `station:${station.id}`, kind: "station", stationId: station.id, label: `${station.name} station`, lat: station.lat, lng: station.lon }));
+  updateBusIntegration(station.lat, station.lon);
+}
+
+function selectTubeStationSilentlyIfNeeded(station) {
+  if (!transientTransportSelection && !persistentTransportFocus) transientTransportSelection = { type: "station", family: "metro", id: station.id, label: station.name, station };
+  applyLayerState();
+}
+
+async function showSurfaceStationInfo(station) {
+  const services = station.services.slice().sort(surfaceLineSort);
+  const tube = station.tubeStationId ? stationRegistry.get(station.tubeStationId) : null;
+  const tubeLines = tube?.lines?.slice().sort(compareTubeLines) || [];
+  const profile = stationProfile(station.name, [...tubeLines, ...services]);
+  const primaryFamily = services.some(item => item.family === "rail") ? "rail" : "tram";
+  const content = el("detail-content");
+  content.innerHTML = `
+    <div class="detail-label">${services.some(item => item.kind === "national") ? "RAIL STATION" : primaryFamily === "tram" ? "TRAM STOP" : "TRANSPORT STATION"}</div>
+    <h2>${escapeHtml(station.name)}</h2>
+    <div class="sub">${escapeHtml(profile.descriptor)}</div>
+    <div class="chips">
+      ${tubeLines.map(line => `<button class="line-chip line-chip-button" data-metro-line-id="${escapeHtml(line.id)}" style="background:${line.color};color:${idealTextColor(line.color)}">${escapeHtml(formatLineName(line))}</button>`).join("")}
+      ${services.map(line => `<button class="line-chip line-chip-button" data-surface-line-id="${escapeHtml(line.id)}" style="background:${line.color};color:${idealTextColor(line.color)}">${escapeHtml(formatSurfaceLineName(line))}</button>`).join("")}
+    </div>
+    <div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(profile.about)}</p></div>
+    <div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>${escapeHtml(profile.background)}</p></div>
+    <div class="detail-section"><div class="detail-label">BUS INTEGRATION</div><div id="bus-info" class="sub">Checking nearby bus stops…</div></div>
+    <div class="detail-actions compact-action-row">
+      <button class="secondary-btn compact-btn" id="focus-station-btn">Focus station</button>
+      <button class="primary-btn compact-btn" id="route-add-station-btn">Add station to Route</button>
+    </div>`;
+  openDetail();
+  content.querySelectorAll("[data-metro-line-id]").forEach(button => button.addEventListener("click", () => selectMetroLine(button.dataset.metroLineId, { showInfo: true })));
+  content.querySelectorAll("[data-surface-line-id]").forEach(button => button.addEventListener("click", () => selectSurfaceLine(button.dataset.surfaceLineId, { showInfo: true })));
+  content.querySelector("#focus-station-btn")?.addEventListener("click", () => setPersistentTransportFocus({ type: "station", family: primaryFamily, id: station.id, label: station.name, station }));
+  content.querySelector("#route-add-station-btn")?.addEventListener("click", () => startRouteWithSegment({ mode: primaryFamily, service: `station:${station.id}`, kind: "station", stationId: station.id, label: `${station.name} station`, lat: station.lat, lng: station.lon }));
+  updateBusIntegration(station.lat, station.lon);
+}
+
+function stationProfile(name, services = []) {
+  const key = looseStationKey(name);
+  const curated = Object.entries(STATION_BACKGROUND).find(([profileKey]) => key.includes(profileKey) || profileKey.includes(key))?.[1];
+  if (curated) return curated;
+  const hasTram = services.some(service => service.family === "tram" || service.kind === "tram");
+  const hasNational = services.some(service => service.kind === "national");
+  const hasRail = services.some(service => service.family === "rail");
+  const descriptor = hasNational ? "Rail interchange" : hasRail ? "Urban rail station" : hasTram ? "London tram stop" : "London Underground station";
+  const serviceNames = services.slice(0, 4).map(service => service.code ? `${service.code} ${service.name || service.displayName}` : service.name).filter(Boolean);
+  return {
+    descriptor,
+    about: `${name} serves ${serviceNames.length ? serviceNames.join(", ") : "London's public transport network"}${services.length > 4 ? " and other services" : ""}. It can be used as a transfer point where the mapped services meet.`,
+    background: `${name} forms part of London's layered transport history, where Underground, suburban rail, light rail and mainline routes have developed over different periods.`
+  };
+}
+
+async function updateBusIntegration(lat, lon) {
+  try {
+    const busStops = await fetchNearbyBusStops(lat, lon);
+    const info = el("bus-info");
+    if (!info) return;
+    if (!busStops.length) { info.textContent = "No nearby TfL bus stops found within 250 m."; return; }
+    const routes = [...new Set(busStops.flatMap(stop => (stop.lines || []).map(line => line.name || line.id)).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+    info.innerHTML = `<strong>${busStops.length}</strong> nearby bus stop${busStops.length === 1 ? "" : "s"} within 250 m.${routes.length ? `<div class="bus-row">Routes: ${escapeHtml(routes.slice(0, 18).join(", "))}${routes.length > 18 ? "…" : ""}</div>` : ""}`;
+  } catch (err) {
+    const info = el("bus-info");
+    if (info) info.textContent = "Bus-stop information is temporarily unavailable.";
+  }
+}
+
+function showPlaceInfo(place) {
+  const content = el("detail-content");
+  const isTransport = normalizeSearch(place.category || "") === "transport";
+  const profile = isTransport ? stationProfile(place.name, []) : null;
+  content.innerHTML = `
+    <div class="detail-label">${escapeHtml(String(place.category || "PLACE").toUpperCase())}</div>
+    <h2>${escapeHtml(place.name)}</h2>
+    <div class="sub">${escapeHtml(place.note || "Saved frequent place")}</div>
+    ${profile ? `<div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(profile.about)}</p></div><div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>${escapeHtml(profile.background)}</p></div>` : ""}
+    <div class="detail-section"><div class="info-row"><span>Coordinates</span><b>${Number(place.lat).toFixed(5)}, ${Number(place.lng).toFixed(5)}</b></div></div>
+    <div class="detail-actions compact-action-row"><button class="mini-edit-btn" id="delete-place-btn">Delete</button></div>`;
+  content.querySelector("#delete-place-btn")?.addEventListener("click", () => deleteFrequentPlace(place.id));
+  openDetail();
+}
+
+function closeDetail(updateBody = true) {
+  el("detail-card").classList.add("hidden");
+  if (transientTransportSelection) {
+    transientTransportSelection = null;
+    applyLayerState();
+  }
+  if (updateBody && allOtherSheetsClosed("detail-card")) document.body.classList.remove("detail-open");
+}
+
+function startRouteWithSegment(segment) {
+  transientTransportSelection = null;
+  persistentTransportFocus = null;
+  updateItemFocusChip();
+  closeDetail(false);
+  routeEditorSegments = [normalizeRouteSegment(segment)];
+  el("route-name-input").value = "";
+  renderRouteEditorSegments();
+  el("route-editor-sheet").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+  showToast("Added as the first route item. Add more segments in the route editor.", 2600);
+}
+
+function normalizeRouteSegment(segment) {
+  return {
+    mode: segment.mode || "walk",
+    service: String(segment.service || ""),
+    kind: segment.kind || "line",
+    label: segment.label || "",
+    stationId: segment.stationId || "",
+    lat: Number.isFinite(Number(segment.lat)) ? Number(segment.lat) : undefined,
+    lng: Number.isFinite(Number(segment.lng)) ? Number(segment.lng) : undefined
+  };
+}
+
+function routeSegmentEditorHtml(segment, index) {
+  if (segment.kind === "station") {
+    return `<div class="route-segment-row station-route-segment"><span class="route-step">${index + 1}</span><div class="station-segment-mode">${escapeHtml(segment.mode.toUpperCase())}</div><div class="station-segment-label">${escapeHtml(segment.label || "Station")}</div><button class="mini-danger" data-remove-segment="${index}" title="Remove segment">×</button></div>`;
+  }
+
+  let serviceControl;
+  if (segment.mode === "metro") {
+    serviceControl = `<select class="form-control" data-segment-service="${index}">${TUBE_LINES.map(line => `<option value="${line.id}" ${line.id === segment.service ? "selected" : ""}>${escapeHtml(formatLineName(line))}</option>`).join("")}</select>`;
+  } else if (segment.mode === "rail" || segment.mode === "tram") {
+    const lines = [...surfaceLineById.values()].filter(line => line.family === segment.mode).sort(surfaceLineSort);
+    const options = lines.map(line => `<option value="${line.id}" ${line.id === segment.service ? "selected" : ""}>${escapeHtml(formatSurfaceLineName(line))}</option>`).join("");
+    serviceControl = lines.length ? `<select class="form-control" data-segment-service="${index}">${options}</select>` : `<input class="form-control" data-segment-service="${index}" value="${escapeHtml(segment.service || "")}" placeholder="${segmentPlaceholder(segment.mode)}" />`;
+  } else {
+    serviceControl = `<input class="form-control" data-segment-service="${index}" value="${escapeHtml(segment.service || "")}" placeholder="${segmentPlaceholder(segment.mode)}" />`;
+  }
+
+  return `<div class="route-segment-row"><span class="route-step">${index + 1}</span><select class="form-control route-mode" data-segment-mode="${index}"><option value="metro" ${segment.mode === "metro" ? "selected" : ""}>Metro</option><option value="rail" ${segment.mode === "rail" ? "selected" : ""}>Rail</option><option value="tram" ${segment.mode === "tram" ? "selected" : ""}>Tram</option><option value="bus" ${segment.mode === "bus" ? "selected" : ""}>Bus</option><option value="walk" ${segment.mode === "walk" ? "selected" : ""}>Walk</option></select><div class="route-service">${serviceControl}</div><button class="mini-danger" data-remove-segment="${index}" title="Remove segment">×</button></div>`;
+}
+
+function saveFavoriteRouteFromEditor() {
+  const name = el("route-name-input").value.trim();
+  const segments = routeEditorSegments.map(normalizeRouteSegment).filter(segment => segment.kind === "station" || segment.mode === "walk" || segment.service);
+  if (!name) { showToast("Give the route a name first."); return; }
+  if (!segments.length) { showToast("Add at least one route segment."); return; }
+  const route = { id: `route-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, name, segments, useCount: 0, createdAt: Date.now() };
+  favoriteRoutes.push(route);
+  saveFavoriteRoutes();
+  closeRouteEditor();
+  renderFavoritesSheet();
+  refreshSearchIfOpen();
+  showToast(`Saved route: ${route.name}`);
+}
+
+function segmentDisplayName(segment) {
+  if (segment.kind === "station") return segment.label || "Station";
+  if (segment.mode === "metro") {
+    const line = TUBE_LINE_BY_ID.get(segment.service);
+    return line ? formatLineName(line) : segment.service || "Metro";
+  }
+  if (segment.mode === "rail" || segment.mode === "tram") {
+    const line = surfaceLineById.get(segment.service);
+    return line ? formatSurfaceLineName(line) : segment.service || (segment.mode === "tram" ? "Tram" : "Rail");
+  }
+  if (segment.mode === "bus") return `Bus ${segment.service}`;
+  if (segment.mode === "walk") return segment.service || "Walk";
+  return segment.service || segment.mode;
+}
+
+function showFavoriteRouteInfo(route) {
+  const mapped = routeMetroLineIds(route).length + routeSurfaceLineIds(route).length + routeStationSegments(route).length;
+  const content = el("detail-content");
+  content.innerHTML = `<div class="detail-label">FAVORITE ROUTE</div><h2>${escapeHtml(route.name)}</h2><div class="sub">${escapeHtml(routeSegmentSummary(route))}</div><div class="detail-section route-segment-list">${(route.segments || []).map((segment,index) => `<div class="route-info-row"><span class="route-step">${index+1}</span><b>${escapeHtml(segmentDisplayName(segment))}</b></div>`).join("")}</div><div class="detail-section"><div class="info-row"><span>Times opened</span><b>${Number(route.useCount || 0)}</b></div><div class="info-row"><span>Mapped items</span><b>${mapped}</b></div></div><div class="detail-actions compact-action-row"><button class="secondary-btn compact-btn" id="exit-route-focus-btn">Exit route focus</button><button class="mini-edit-btn danger-text" id="delete-route-btn">Delete</button></div>`;
+  content.querySelector("#exit-route-focus-btn")?.addEventListener("click", () => { clearFavoriteRouteFocus(); closeDetail(); });
+  content.querySelector("#delete-route-btn")?.addEventListener("click", () => deleteFavoriteRoute(route.id));
+  openDetail();
+}
+
+function buildSearchResults(query) {
+  const q = normalizeSearch(query);
+  if (!q) return [];
+  const results = [];
+
+  for (const line of TUBE_LINES) {
+    const hay = normalizeSearch(`${line.code} ${line.name} ${line.id} underground metro`);
+    const score = searchScore(q, hay, normalizeSearch(line.code), normalizeSearch(line.name));
+    if (score > 0) results.push({ type: "line", score, line });
+  }
+  for (const line of surfaceLineById.values()) {
+    const hay = normalizeSearch(`${line.code} ${line.name} ${line.displayName} ${line.apiId} ${line.family} ${line.kind}`);
+    const score = searchScore(q, hay, normalizeSearch(line.code), normalizeSearch(line.name), normalizeSearch(line.displayName));
+    if (score > 0) results.push({ type: "surface-line", score, line });
+  }
+  for (const place of frequentPlaces) {
+    const hay = normalizeSearch(`${place.name} ${place.category} ${place.note || ""}`);
+    const score = searchScore(q, hay, normalizeSearch(place.name));
+    if (score > 0) results.push({ type: "place", score, place });
+  }
+  for (const station of getSearchStations()) {
+    const metroText = (station.lines || []).map(formatLineName).join(" ");
+    const surfaceText = (station.surfaceServices || station.services || []).map(formatSurfaceLineName).join(" ");
+    const hay = normalizeSearch(`${station.name} ${metroText} ${surfaceText} station rail tram metro underground`);
+    const score = searchScore(q, hay, normalizeSearch(station.name));
+    if (score > 0) results.push({ type: station.stationFamily === "surface" ? "surface-station" : "station", score, station });
+  }
+  for (const route of favoriteRoutes) {
+    const segmentText = (route.segments || []).map(segmentDisplayName).join(" ");
+    const hay = normalizeSearch(`${route.name} ${segmentText} favorite route journey`);
+    const score = searchScore(q, hay, normalizeSearch(route.name));
+    if (score > 0) results.push({ type: "route", score, route });
+  }
+  return results.sort((a,b) => b.score - a.score || resultTitle(a).localeCompare(resultTitle(b))).slice(0, 11);
+}
+
+function getSearchStations() {
+  const combined = [...stationRegistry.values()].map(station => ({ ...station, lines: station.lines.slice().sort(compareTubeLines), stationFamily: "metro" }));
+  const matchedTubeIds = new Set([...surfaceStationRegistry.values()].map(station => station.tubeStationId).filter(Boolean));
+  for (const station of surfaceStationRegistry.values()) {
+    if (station.tubeStationId && matchedTubeIds.has(station.tubeStationId)) continue;
+    combined.push({ ...station, services: station.services.slice().sort(surfaceLineSort), stationFamily: "surface" });
+  }
+  return combined.sort((a,b) => a.name.localeCompare(b.name));
+}
+
+function searchResultHtml(result, index) {
+  if (result.type === "line") return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon" style="background:${result.line.color};color:${idealTextColor(result.line.color)}">${escapeHtml(result.line.code)}</div><div><div class="result-title">${escapeHtml(formatLineName(result.line))}</div><div class="result-sub">Metro line</div></div></button>`;
+  if (result.type === "surface-line") return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon" style="background:${result.line.color};color:${idealTextColor(result.line.color)}">${escapeHtml(result.line.code)}</div><div><div class="result-title">${escapeHtml(formatSurfaceLineName(result.line))}</div><div class="result-sub">${escapeHtml(result.line.family === "tram" ? "Tram" : result.line.kind === "national" ? "National Rail" : "Rail")}</div></div></button>`;
+  if (result.type === "station" || result.type === "surface-station") {
+    const station = result.station;
+    const metro = (station.lines || []).map(formatLineName);
+    const surface = (station.surfaceServices || station.services || []).map(formatSurfaceLineName);
+    return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon">${result.type === "surface-station" ? "R" : "M"}</div><div><div class="result-title">${escapeHtml(station.name)}</div><div class="result-sub">${escapeHtml([...metro, ...surface].join(" · ") || "Transport station")}</div></div></button>`;
+  }
+  if (result.type === "route") return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon">★</div><div><div class="result-title">${escapeHtml(result.route.name)}</div><div class="result-sub">${escapeHtml(routeSegmentSummary(result.route))}</div></div></button>`;
+  return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon">●</div><div><div class="result-title">${escapeHtml(result.place.name)}</div><div class="result-sub">${escapeHtml(result.place.category)} · Frequent place</div></div></button>`;
+}
+
+function selectSearchResult(result) {
+  if (!result) return;
+  hideSearchResults();
+  el("search-input").blur();
+  if (result.type === "route") { activateFavoriteRoute(result.route.id); return; }
+  if (result.type === "place") {
+    clearFavoriteRouteFocus(); transientTransportSelection = null; persistentTransportFocus = null; layerState.places = true; applyLayerState();
+    map.panTo({ lat: result.place.lat, lng: result.place.lng }); map.setZoom(Math.max(map.getZoom() || 15, 16)); showPlaceInfo(result.place); return;
+  }
+  if (result.type === "station") {
+    map.panTo({ lat: result.station.lat, lng: result.station.lon }); map.setZoom(16); selectTubeStation(result.station, { showInfo: true }); return;
+  }
+  if (result.type === "surface-station") {
+    map.panTo({ lat: result.station.lat, lng: result.station.lon }); map.setZoom(16); selectSurfaceStation(result.station, { showInfo: true }); return;
+  }
+  if (result.type === "surface-line") { selectSurfaceLine(result.line.id, { fit: true, showInfo: true }); return; }
+  if (result.type === "line") selectMetroLine(result.line.id, { fit: true, showInfo: true });
+}
+
+function resultTitle(result) {
+  if (result.type === "line") return formatLineName(result.line);
+  if (result.type === "surface-line") return formatSurfaceLineName(result.line);
+  if (result.type === "station" || result.type === "surface-station") return result.station.name;
+  if (result.type === "route") return result.route.name;
+  return result.place.name;
+}
+
+function clearTfLCache() {
+  Object.keys(localStorage).filter(key => key.startsWith(TFL_CACHE_PREFIX) || key.startsWith(SURFACE_CACHE_PREFIX)).forEach(key => localStorage.removeItem(key));
+  localStorage.removeItem(TUBE_GEOMETRY_CACHE_KEY);
+}
+
+
 /* ---------- Controls ---------- */
 el("metro-btn").addEventListener("click", () => {
   if (!map) return;
@@ -2132,6 +3386,11 @@ el("metro-btn").addEventListener("click", () => {
 el("rail-btn").addEventListener("click", () => {
   if (!map) return;
   toggleLayer("rail");
+});
+
+el("tram-btn").addEventListener("click", () => {
+  if (!map) return;
+  toggleLayer("tram");
 });
 
 el("places-btn").addEventListener("click", () => {
@@ -2172,6 +3431,12 @@ el("favorites-close").addEventListener("click", () => closeFavoritesSheet());
 el("route-focus-chip").addEventListener("click", () => {
   const route = getActiveFavoriteRoute();
   if (route) showFavoriteRouteInfo(route);
+});
+
+el("item-focus-chip").addEventListener("click", () => {
+  clearPersistentTransportFocus();
+  closeDetail();
+  showToast("Focus cleared.");
 });
 
 el("save-place-btn").addEventListener("click", savePlaceFromEditor);
@@ -2224,7 +3489,9 @@ el("refresh-tfl-btn").addEventListener("click", async () => {
   if (!map) return;
   hideModal("settings-modal");
   clearTfLCache();
-  await loadTubeNetwork(true);
+  clearSurfaceNetwork();
+  await Promise.allSettled([loadTubeNetwork(true), loadSurfaceNetworks(true)]);
+  if (layerState.rail) ensureNationalRailLoaded(true);
 });
 
 el("save-key-btn").addEventListener("click", async () => {

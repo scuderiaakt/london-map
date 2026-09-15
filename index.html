@@ -10,7 +10,7 @@
   <title>London Life Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.3c" />
+  <link rel="stylesheet" href="styles.css?v=1.3d" />
 </head>
 <body>
   <main id="app">
@@ -36,8 +36,11 @@
         <button id="metro-btn" class="layer-chip" aria-pressed="false">
           <span class="layer-dot metro-dot"></span>Metro
         </button>
-        <button id="rail-btn" class="layer-chip coming" aria-pressed="false" title="Rail network will be added in a later build">
+        <button id="rail-btn" class="layer-chip" aria-pressed="false">
           <span class="layer-dot rail-dot"></span>Rail
+        </button>
+        <button id="tram-btn" class="layer-chip" aria-pressed="false">
+          <span class="layer-dot tram-dot"></span>Tram
         </button>
         <button id="places-btn" class="layer-chip" aria-pressed="false">
           <span class="layer-dot places-dot"></span>Places
@@ -45,6 +48,9 @@
       </div>
       <button id="route-focus-chip" class="route-focus-chip glass hidden" aria-label="Open active favorite route">
         ★ <span data-route-focus-name></span>
+      </button>
+      <button id="item-focus-chip" class="item-focus-chip glass hidden" aria-label="Exit focused transport item">
+        ◎ <span data-item-focus-name></span> · Exit focus
       </button>
     </section>
 
@@ -66,7 +72,7 @@
     </div>
 
     <div id="network-status" class="network-status glass">Loading Tube network…</div>
-    <div class="attribution glass">Tube metadata © TfL · track geometry © OpenStreetMap contributors</div>
+    <div class="attribution glass">Transport data © TfL · Tube track geometry © OpenStreetMap contributors</div>
 
     <section id="detail-card" class="detail-card glass hidden" aria-live="polite" aria-label="Map information">
       <div class="sheet-handle" aria-hidden="true"></div>
@@ -145,7 +151,7 @@
       <div id="route-segments" class="route-segments"></div>
       <button id="add-route-segment-btn" class="secondary-btn compact-btn">＋ Add segment</button>
       <button id="save-route-btn" class="primary-btn full-btn">Save favorite route</button>
-      <div class="fineprint detail-section">Metro segments can be isolated on the map now. Rail, Tram and Bus segments are saved and will become map-visible as those layers are added later.</div>
+      <div class="fineprint detail-section">Metro, Rail and Tram segments can be isolated on the map now. Bus segments are saved for the later directions build.</div>
     </section>
 
     <section id="key-modal" class="modal">
@@ -172,8 +178,8 @@
         <div class="modal-kicker">SETTINGS</div>
         <h2>Map settings</h2>
         <button id="replace-key-btn" class="secondary-btn">Replace Google Maps key</button>
-        <button id="refresh-tfl-btn" class="secondary-btn">Refresh Tube data</button>
-        <p class="fineprint">Tube geometry is cached on your device for 24 hours to make mobile loading faster.</p>
+        <button id="refresh-tfl-btn" class="secondary-btn">Refresh transport data</button>
+        <p class="fineprint">Metro, Rail and Tram data are cached on your device for 24 hours to make mobile loading faster.</p>
       </div>
     </section>
 
@@ -196,6 +202,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.3c"></script>
+  <script src="app.js?v=1.3d"></script>
 </body>
 </html>
