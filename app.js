@@ -1,4 +1,4 @@
-/* London Life Map v1.3E
+/* London Life Map v1.3F
    Google Maps basemap + geographic London Underground overlay.
    v1.3D adds Rail + Tram, transport focus, richer information panels and route-building hooks,
    while preserving persistent favorites, geographic Metro and the mobile-first interface.
@@ -2965,7 +2965,7 @@ function initMap() {
   initSurfaceOverlayClasses();
   createPlaceMarkers();
   loadTubeNetwork();
-  loadSurfaceNetworks();
+  /* v1.3F: Rail/Tram load lazily when toggled to reduce startup lag. */
   applyLayerState();
 
   map.addListener("click", event => {
@@ -3947,6 +3947,948 @@ el("search-input")?.addEventListener("keydown", event => {
     if (query) searchAllLondon(query);
   }
 });
+
+
+/* ---------- v1.3F: city information, route precision, panel workspace, performance ---------- */
+const V13F_CITY_PREFS_STORAGE = "londonMap.cityInfoPrefs.v1";
+const V13F_PANEL_POSITIONS_STORAGE = "londonMap.panelPositions.v1";
+const V13F_WEATHER_CACHE_STORAGE = "londonMap.boroughWeather.v1";
+const V13F_BOROUGH_GEOJSON_URL = "https://raw.githubusercontent.com/radoi90/housequest-data/master/london_boroughs.geojson";
+const V13F_WEATHER_CACHE_MS = 10 * 60 * 1000;
+
+let cityInfoState = loadV13FCityPrefs();
+let boroughDataLayer = null;
+let boroughFeaturesReady = false;
+let boroughCentroids = [];
+let boroughLabelOverlays = [];
+let boroughWeatherByName = new Map();
+let boroughWeatherLoading = null;
+let windOverlays = [];
+let windLoading = null;
+let routeHighlightPolylines = [];
+let routeGraphCache = new Map();
+let panelZCounter = 90;
+let v13fSurfaceLoadTimer = null;
+
+const V13F_WIND_MAP_STYLES = [
+  { elementType: "geometry", stylers: [{ color: "#111820" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#596672" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#111820" }, { weight: 3 }] },
+  { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#1a232d" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#485563" }] },
+  { featureType: "transit", elementType: "labels", stylers: [{ visibility: "off" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0b2230" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#3e6174" }] }
+];
+
+function loadV13FCityPrefs() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(V13F_CITY_PREFS_STORAGE) || "null");
+    if (parsed && typeof parsed === "object") return { districts: !!parsed.districts, weather: !!parsed.weather, wind: !!parsed.wind };
+  } catch {}
+  return { districts: false, weather: false, wind: false };
+}
+
+function saveV13FCityPrefs() {
+  try { localStorage.setItem(V13F_CITY_PREFS_STORAGE, JSON.stringify(cityInfoState)); } catch {}
+}
+
+function syncV13FCityButtons() {
+  ["districts", "weather", "wind"].forEach(name => {
+    const button = el(`panel-${name}-toggle`);
+    if (!button) return;
+    const active = !!cityInfoState[name];
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
+function boroughNameFromFeature(feature) {
+  const props = {};
+  feature.forEachProperty((value, key) => props[key] = value);
+  const preferred = ["name", "NAME", "borough", "BOROUGH", "Borough", "NAME_2", "LAD23NM", "LAD24NM", "GSS_NAME"];
+  for (const key of preferred) if (props[key]) return String(props[key]).trim();
+  const fuzzyKey = Object.keys(props).find(key => /name|borough|lad.*nm/i.test(key) && props[key]);
+  return fuzzyKey ? String(props[fuzzyKey]).trim() : "London borough";
+}
+
+function featureAverageLatLng(feature) {
+  let lat = 0, lng = 0, count = 0;
+  feature.getGeometry()?.forEachLatLng(point => { lat += point.lat(); lng += point.lng(); count += 1; });
+  return count ? { lat: lat / count, lng: lng / count } : null;
+}
+
+function boroughShade(index) {
+  const hue = Math.round((index * 137.508 + 205) % 360);
+  return `hsl(${hue} 34% 40%)`;
+}
+
+function ensureBoroughOverlayClass() {
+  if (window.__V13FBoroughLabelOverlay) return;
+  window.__V13FBoroughLabelOverlay = class extends HtmlOverlay {
+    constructor(item) {
+      super(item.position, "borough-label-overlay");
+      this.item = item;
+    }
+    onAdd() {
+      super.onAdd();
+      this.updateContent();
+    }
+    updateContent() {
+      if (!this.div) return;
+      const weather = boroughWeatherByName.get(this.item.name);
+      const showWeather = cityInfoState.weather && weather;
+      this.div.innerHTML = `<div class="borough-label-name">${escapeHtml(this.item.name)}</div>${showWeather ? `<div class="borough-label-weather"><span>${weather.emoji}</span><b>${Math.round(weather.temperature)}°C</b><small>${escapeHtml(weather.label)}</small></div>` : ""}`;
+      this.div.classList.toggle("weather-on", !!showWeather);
+    }
+  };
+}
+
+async function ensureBoroughData() {
+  if (boroughFeaturesReady && boroughDataLayer) return;
+  if (!map) return;
+  boroughDataLayer = boroughDataLayer || new google.maps.Data();
+  boroughDataLayer.setStyle(feature => ({
+    fillColor: feature.getProperty("__v13fColor") || "#56718a",
+    fillOpacity: cityInfoState.districts ? 0.23 : 0,
+    strokeColor: "#d8e4ef",
+    strokeOpacity: cityInfoState.districts ? 0.48 : 0,
+    strokeWeight: cityInfoState.districts ? 1.05 : 0,
+    clickable: false,
+    zIndex: 2
+  }));
+
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    try {
+      boroughDataLayer.loadGeoJson(V13F_BOROUGH_GEOJSON_URL, null, features => {
+        if (settled) return;
+        settled = true;
+        if (!features?.length) { reject(new Error("No borough boundaries returned.")); return; }
+        const items = features.map(feature => ({ feature, name: boroughNameFromFeature(feature), position: featureAverageLatLng(feature) })).filter(item => item.position).sort((a,b) => a.name.localeCompare(b.name));
+        items.forEach((item, index) => item.feature.setProperty("__v13fColor", boroughShade(index)));
+        boroughCentroids = items.map(item => ({ name: item.name, position: item.position }));
+        boroughFeaturesReady = true;
+        rebuildBoroughLabels();
+        resolve();
+      });
+      setTimeout(() => { if (!settled) { settled = true; reject(new Error("Borough boundary request timed out.")); } }, 15000);
+    } catch (err) { reject(err); }
+  });
+}
+
+function rebuildBoroughLabels() {
+  boroughLabelOverlays.forEach(item => item.setMap(null));
+  boroughLabelOverlays = [];
+  if (!map || !boroughFeaturesReady) return;
+  ensureBoroughOverlayClass();
+  for (const item of boroughCentroids) {
+    const overlay = new window.__V13FBoroughLabelOverlay(item);
+    overlay.setMap(map);
+    overlay.setVisible(cityInfoState.districts || cityInfoState.weather);
+    boroughLabelOverlays.push(overlay);
+  }
+  refreshBoroughLabelVisibility();
+}
+
+function refreshBoroughLabelVisibility() {
+  const zoom = map?.getZoom?.() || 12;
+  const visible = (cityInfoState.districts || cityInfoState.weather) && zoom >= 9;
+  boroughLabelOverlays.forEach(overlay => {
+    overlay.setVisible(visible);
+    overlay.updateContent?.();
+    if (overlay.div) {
+      overlay.div.classList.toggle("borough-label-compact", zoom <= 10);
+      overlay.div.style.opacity = zoom <= 9 ? ".68" : zoom <= 10 ? ".80" : ".96";
+    }
+  });
+}
+
+function weatherCodeInfo(code) {
+  const value = Number(code);
+  if (value === 0) return { label: "Clear", emoji: "☀" };
+  if ([1,2].includes(value)) return { label: "Partly cloudy", emoji: "⛅" };
+  if (value === 3) return { label: "Cloudy", emoji: "☁" };
+  if ([45,48].includes(value)) return { label: "Fog", emoji: "≋" };
+  if ([51,53,55,56,57].includes(value)) return { label: "Drizzle", emoji: "🌦" };
+  if ([61,63,65,66,67,80,81,82].includes(value)) return { label: "Rain", emoji: "🌧" };
+  if ([71,73,75,77,85,86].includes(value)) return { label: "Snow", emoji: "❄" };
+  if ([95,96,99].includes(value)) return { label: "Thunderstorm", emoji: "⚡" };
+  return { label: "Weather", emoji: "◌" };
+}
+
+function loadWeatherCache() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(V13F_WEATHER_CACHE_STORAGE) || "null");
+    if (!parsed?.time || Date.now() - parsed.time > V13F_WEATHER_CACHE_MS || !Array.isArray(parsed.items)) return false;
+    boroughWeatherByName = new Map(parsed.items.map(item => [item.name, item.weather]));
+    return true;
+  } catch { return false; }
+}
+
+async function ensureBoroughWeather(force = false) {
+  if (!boroughFeaturesReady) await ensureBoroughData();
+  if (!force && boroughWeatherByName.size) return;
+  if (!force && loadWeatherCache()) { refreshBoroughLabelVisibility(); return; }
+  if (boroughWeatherLoading) return boroughWeatherLoading;
+  boroughWeatherLoading = (async () => {
+    const coords = boroughCentroids;
+    if (!coords.length) return;
+    const latitudes = coords.map(item => item.position.lat.toFixed(5)).join(",");
+    const longitudes = coords.map(item => item.position.lng.toFixed(5)).join(",");
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(latitudes)}&longitude=${encodeURIComponent(longitudes)}&current=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m&temperature_unit=celsius&wind_speed_unit=kmh&timezone=Europe%2FLondon`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Weather request returned ${res.status}`);
+    let data = await res.json();
+    if (!Array.isArray(data)) data = [data];
+    boroughWeatherByName = new Map();
+    coords.forEach((item, index) => {
+      const current = data[index]?.current || {};
+      const info = weatherCodeInfo(current.weather_code);
+      boroughWeatherByName.set(item.name, {
+        temperature: Number(current.temperature_2m),
+        code: Number(current.weather_code),
+        windSpeed: Number(current.wind_speed_10m),
+        windDirection: Number(current.wind_direction_10m),
+        ...info
+      });
+    });
+    try { localStorage.setItem(V13F_WEATHER_CACHE_STORAGE, JSON.stringify({ time: Date.now(), items: [...boroughWeatherByName.entries()].map(([name, weather]) => ({ name, weather })) })); } catch {}
+    refreshBoroughLabelVisibility();
+  })().catch(err => {
+    console.warn("Borough weather unavailable", err);
+    showToast("London weather data is temporarily unavailable.", 3200);
+  }).finally(() => { boroughWeatherLoading = null; });
+  return boroughWeatherLoading;
+}
+
+function makeWindGrid() {
+  const points = [];
+  const rows = 5, cols = 7;
+  const south = 51.30, north = 51.68, west = -0.50, east = 0.28;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    points.push({ lat: south + (north - south) * (r + 0.5) / rows, lng: west + (east - west) * (c + 0.5) / cols });
+  }
+  return points;
+}
+
+function clearWindOverlays() {
+  windOverlays.forEach(item => item.setMap(null));
+  windOverlays = [];
+}
+
+async function ensureWindOverlay(force = false) {
+  if (!map || (!cityInfoState.wind && !force)) return;
+  if (windLoading) return windLoading;
+  clearWindOverlays();
+  windLoading = (async () => {
+    const points = makeWindGrid();
+    const lats = points.map(item => item.lat.toFixed(4)).join(",");
+    const lngs = points.map(item => item.lng.toFixed(4)).join(",");
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lats)}&longitude=${encodeURIComponent(lngs)}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=kmh&timezone=Europe%2FLondon`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Wind request returned ${res.status}`);
+    let data = await res.json();
+    if (!Array.isArray(data)) data = [data];
+    ensureWindArrowOverlayClass();
+    points.forEach((position, index) => {
+      const current = data[index]?.current || {};
+      const speed = Number(current.wind_speed_10m) || 0;
+      const fromDirection = Number(current.wind_direction_10m) || 0;
+      const overlay = new window.__V13FWindArrowOverlay(position, speed, fromDirection);
+      overlay.setMap(map);
+      overlay.setVisible(cityInfoState.wind);
+      windOverlays.push(overlay);
+    });
+  })().catch(err => {
+    console.warn("Wind overlay unavailable", err);
+    showToast("Wind data is temporarily unavailable.", 3000);
+  }).finally(() => { windLoading = null; });
+  return windLoading;
+}
+
+function ensureWindArrowOverlayClass() {
+  if (window.__V13FWindArrowOverlay) return;
+  window.__V13FWindArrowOverlay = class extends HtmlOverlay {
+    constructor(position, speed, direction) {
+      super(position, "wind-arrow-overlay");
+      this.speed = speed;
+      this.direction = direction;
+    }
+    onAdd() {
+      super.onAdd();
+      const rotation = (this.direction + 90) % 360;
+      const scale = Math.max(.78, Math.min(1.55, .78 + this.speed / 55));
+      this.div.innerHTML = `<span class="wind-arrow-glyph" style="transform:rotate(${rotation}deg) scale(${scale})">➤</span><small>${Math.round(this.speed)} km/h</small>`;
+    }
+  };
+}
+
+async function toggleCityInfoLayer(name) {
+  cityInfoState[name] = !cityInfoState[name];
+  saveV13FCityPrefs();
+  syncV13FCityButtons();
+  try {
+    if (name === "districts" || name === "weather") await ensureBoroughData();
+    if (name === "weather" && cityInfoState.weather) await ensureBoroughWeather();
+    if (name === "wind" && cityInfoState.wind) await ensureWindOverlay();
+  } catch (err) {
+    console.warn(`Could not load ${name}`, err);
+    cityInfoState[name] = false;
+    saveV13FCityPrefs();
+    syncV13FCityButtons();
+    showToast(`${name[0].toUpperCase()}${name.slice(1)} layer could not load.`, 3000);
+  }
+  applyV13FCityInfoState();
+}
+
+function applyV13FCityInfoState() {
+  if (boroughDataLayer) boroughDataLayer.setMap(cityInfoState.districts ? map : null);
+  if (boroughDataLayer) boroughDataLayer.setStyle(feature => ({
+    fillColor: feature.getProperty("__v13fColor") || "#56718a",
+    fillOpacity: cityInfoState.districts ? 0.23 : 0,
+    strokeColor: "#d8e4ef",
+    strokeOpacity: cityInfoState.districts ? 0.48 : 0,
+    strokeWeight: cityInfoState.districts ? 1.05 : 0,
+    clickable: false,
+    zIndex: 2
+  }));
+  refreshBoroughLabelVisibility();
+  windOverlays.forEach(item => item.setVisible(cityInfoState.wind));
+  syncV13FCityButtons();
+  applyBaseMapStyle();
+}
+
+/* --- Surface performance: lazy load + simplified display geometry --- */
+function v13fThinPath(path, maxPoints) {
+  if (!Array.isArray(path) || path.length <= maxPoints) return path || [];
+  const step = Math.ceil(path.length / maxPoints);
+  const out = [];
+  for (let i = 0; i < path.length; i += step) out.push(path[i]);
+  if (out[out.length - 1] !== path[path.length - 1]) out.push(path[path.length - 1]);
+  return out;
+}
+
+renderSurfaceLines = function() {
+  surfaceRenderings.forEach(item => item.polyline.setMap(null));
+  surfaceRenderings = [];
+  for (const line of [...surfaceLineById.values()].sort(surfaceLineSort)) {
+    const geometries = surfaceGeometryRegistry.get(line.id) || [];
+    for (const rawPath of geometries) {
+      if (!Array.isArray(rawPath) || rawPath.length < 2) continue;
+      const limit = line.kind === "national" ? 170 : line.kind === "overground" ? 240 : 300;
+      renderSurfacePath(line, v13fThinPath(rawPath, limit));
+    }
+  }
+};
+
+const buildSurfaceStationNodesV13D = buildSurfaceStationNodes;
+buildSurfaceStationNodes = function() {
+  surfaceStationOverlays.forEach(item => item.setMap(null));
+  surfaceStationOverlays = [];
+  const all = [...surfaceStationRegistry.values()];
+  const curatedKeys = new Set(Object.keys(STATION_BACKGROUND));
+  const selected = all.filter(station => {
+    const onlyNational = station.services.length && station.services.every(service => service.kind === "national");
+    if (!onlyNational) return true;
+    const key = looseStationKey(station.name);
+    const curated = [...curatedKeys].some(item => key.includes(item) || item.includes(key));
+    const central = station.lat >= 51.42 && station.lat <= 51.60 && station.lon >= -0.34 && station.lon <= 0.16;
+    return curated || central;
+  }).slice(0, 260);
+  for (const station of selected) {
+    station.services.sort(surfaceLineSort);
+    const overlay = new SurfaceStationOverlay(station);
+    overlay.setMap(map);
+    overlay.setVisible(false);
+    surfaceStationOverlays.push(overlay);
+  }
+};
+
+toggleLayer = function(name) {
+  activeFavoriteRouteId = null;
+  transientTransportSelection = null;
+  persistentTransportFocus = null;
+  updateRouteFocusChip();
+  updateItemFocusChip();
+  layerState[name] = !layerState[name];
+  applyLayerState();
+
+  if ((name === "rail" || name === "tram") && layerState[name] && !surfaceCoreLoaded) {
+    showToast("Loading London Rail + Tram only when needed…", 1800);
+    loadSurfaceNetworks().then(() => { routeGraphCache.clear(); applyLayerState(); });
+  }
+  if (name === "rail" && layerState.rail && !nationalRailLoaded) {
+    clearTimeout(v13fSurfaceLoadTimer);
+    v13fSurfaceLoadTimer = setTimeout(() => {
+      if (layerState.rail && !nationalRailLoaded) {
+        const load = () => ensureNationalRailLoaded().then(() => { routeGraphCache.clear(); applyLayerState(); });
+        if ("requestIdleCallback" in window) requestIdleCallback(load, { timeout: 1800 }); else load();
+      }
+    }, 900);
+  }
+};
+
+
+/* Rebuild expensive labels only for layers that are actually visible. */
+scheduleLineLabelRefresh = function() {
+  clearTimeout(lineLabelRefreshTimer);
+  clearTimeout(surfaceLabelRefreshTimer);
+  if (layerState.metro) {
+    lineLabelRefreshTimer = setTimeout(() => { if (lineGeometryRegistry.size) { rebuildLineLabels(); applyLayerState(); } }, 240);
+  }
+  if (layerState.rail || layerState.tram) {
+    surfaceLabelRefreshTimer = setTimeout(() => { if (surfaceGeometryRegistry.size) { rebuildSurfaceLabels(); applyLayerState(); } }, 480);
+  }
+};
+
+/* --- 30% secondary Metro visibility --- */
+const applyLayerStateV13EFinal = applyLayerState;
+applyLayerState = function() {
+  applyLayerStateV13EFinal();
+  const route = getActiveFavoriteRoute();
+  const selection = getTransportSelection();
+  const secondaryMetro = layerState.metro && !route && !selection && (layerState.rail || layerState.tram || layerState.places || cityInfoState.districts || cityInfoState.weather || cityInfoState.wind);
+  if (secondaryMetro) {
+    lineRenderings.forEach(item => {
+      if (!item.polyline.getVisible()) return;
+      if (item.role === "hit") item.polyline.setOptions({ strokeOpacity: 0.001, strokeWeight: 18 });
+      else if (item.role === "casing") item.polyline.setOptions({ strokeOpacity: 0.22, strokeWeight: 4.8, zIndex: 15 });
+      else item.polyline.setOptions({ strokeOpacity: 0.30, strokeWeight: 3.1, zIndex: 16 });
+    });
+    stationOverlays.forEach(overlay => { if (overlay.div) overlay.div.style.opacity = ".52"; });
+    lineLabelOverlays.forEach(overlay => { if (overlay.div) overlay.div.style.opacity = ".58"; });
+  } else {
+    stationOverlays.forEach(overlay => { if (overlay.div) overlay.div.style.opacity = ""; });
+    lineLabelOverlays.forEach(overlay => { if (overlay.div) overlay.div.style.opacity = ""; });
+  }
+  applyV13FCityInfoState();
+  refreshPreciseRouteHighlights();
+};
+
+const applyBaseMapStyleV13EFinal = applyBaseMapStyle;
+applyBaseMapStyle = function() {
+  if (!map || activeMapType !== "roadmap") return;
+  if (cityInfoState.wind) {
+    map.setOptions({ styles: V13F_WIND_MAP_STYLES });
+    return;
+  }
+  applyBaseMapStyleV13EFinal();
+};
+
+/* --- Precise route segments: line + start station + end station --- */
+function routeStationsForService(mode, service) {
+  if (mode === "metro") {
+    return [...stationRegistry.values()].filter(station => station.lines?.some(line => line.id === service)).sort((a,b) => a.name.localeCompare(b.name));
+  }
+  if (mode === "rail" || mode === "tram") {
+    return [...surfaceStationRegistry.values()].filter(station => station.services?.some(line => line.id === service)).sort((a,b) => a.name.localeCompare(b.name));
+  }
+  return [];
+}
+
+function getStationForSegment(mode, id) {
+  if (!id) return null;
+  return mode === "metro" ? stationRegistry.get(id) : surfaceStationRegistry.get(id);
+}
+
+function defaultServiceForStation(mode, stationId) {
+  if (mode === "metro") return stationRegistry.get(stationId)?.lines?.[0]?.id || "piccadilly";
+  const station = surfaceStationRegistry.get(stationId);
+  return station?.services?.find(line => line.family === mode)?.id || station?.services?.[0]?.id || "";
+}
+
+normalizeRouteSegment = function(segment) {
+  const normalized = {
+    mode: segment.mode || "walk",
+    service: String(segment.service || ""),
+    kind: segment.kind === "station" ? "station" : "line",
+    label: segment.label || "",
+    stationId: segment.stationId || "",
+    lat: Number.isFinite(Number(segment.lat)) ? Number(segment.lat) : undefined,
+    lng: Number.isFinite(Number(segment.lng)) ? Number(segment.lng) : undefined,
+    startStationId: segment.startStationId || "",
+    endStationId: segment.endStationId || "",
+    startStationName: segment.startStationName || "",
+    endStationName: segment.endStationName || ""
+  };
+  if (normalized.kind === "station" && normalized.stationId && ["metro", "rail", "tram"].includes(normalized.mode)) {
+    normalized.kind = "line";
+    normalized.service = normalized.service.startsWith("station:") ? defaultServiceForStation(normalized.mode, normalized.stationId) : normalized.service || defaultServiceForStation(normalized.mode, normalized.stationId);
+    normalized.startStationId = normalized.stationId;
+    normalized.startStationName = normalized.label.replace(/ station$/i, "") || getStationForSegment(normalized.mode, normalized.stationId)?.name || "Start";
+    normalized.stationId = "";
+  }
+  return normalized;
+};
+
+function v13fServiceOptions(segment) {
+  if (segment.mode === "metro") {
+    return TUBE_LINES.map(line => `<option value="${escapeHtml(line.id)}" ${line.id === segment.service ? "selected" : ""}>${escapeHtml(formatLineName(line))}</option>`).join("");
+  }
+  if (segment.mode === "rail" || segment.mode === "tram") {
+    const lines = [...surfaceLineById.values()].filter(line => line.family === segment.mode).sort(surfaceLineSort);
+    return lines.map(line => `<option value="${escapeHtml(line.id)}" ${line.id === segment.service ? "selected" : ""}>${escapeHtml(formatSurfaceLineName(line))}</option>`).join("");
+  }
+  return "";
+}
+
+function v13fStationOptions(segment, selectedId, placeholder) {
+  const stations = routeStationsForService(segment.mode, segment.service);
+  const options = stations.map(station => `<option value="${escapeHtml(station.id)}" ${station.id === selectedId ? "selected" : ""}>${escapeHtml(station.name)}</option>`).join("");
+  return `<option value="">${escapeHtml(placeholder)}</option>${options}`;
+}
+
+routeSegmentEditorHtml = function(rawSegment, index) {
+  const segment = normalizeRouteSegment(rawSegment);
+  if (["metro", "rail", "tram"].includes(segment.mode)) {
+    const services = v13fServiceOptions(segment);
+    const waiting = !services;
+    return `<div class="route-segment-card" data-route-card="${index}">
+      <div class="route-segment-card-head"><span class="route-step">${index + 1}</span><select class="form-control route-mode" data-segment-mode="${index}"><option value="metro" ${segment.mode === "metro" ? "selected" : ""}>Metro</option><option value="rail" ${segment.mode === "rail" ? "selected" : ""}>Rail</option><option value="tram" ${segment.mode === "tram" ? "selected" : ""}>Tram</option><option value="bus">Bus</option><option value="walk">Walk</option></select><button class="mini-danger" data-remove-segment="${index}" title="Remove segment">×</button></div>
+      <select class="form-control route-line-select" data-segment-service="${index}" ${waiting ? "disabled" : ""}>${services || `<option>Load ${segment.mode} layer first</option>`}</select>
+      <div class="route-endpoints">
+        <select class="form-control" data-segment-start="${index}">${v13fStationOptions(segment, segment.startStationId, "Start station")}</select>
+        <span class="route-endpoint-arrow">→</span>
+        <select class="form-control" data-segment-end="${index}">${v13fStationOptions(segment, segment.endStationId, "End station")}</select>
+      </div>
+      <div class="route-segment-status">${segment.startStationId && segment.endStationId ? `Glow: ${escapeHtml(segment.startStationName || getStationForSegment(segment.mode, segment.startStationId)?.name || "Start")} → ${escapeHtml(segment.endStationName || getStationForSegment(segment.mode, segment.endStationId)?.name || "End")}` : "Choose both stations — or tap stations on the map while this panel stays open."}</div>
+    </div>`;
+  }
+  const placeholder = segmentPlaceholder(segment.mode);
+  return `<div class="route-segment-card"><div class="route-segment-card-head"><span class="route-step">${index + 1}</span><select class="form-control route-mode" data-segment-mode="${index}"><option value="metro">Metro</option><option value="rail">Rail</option><option value="tram">Tram</option><option value="bus" ${segment.mode === "bus" ? "selected" : ""}>Bus</option><option value="walk" ${segment.mode === "walk" ? "selected" : ""}>Walk</option></select><button class="mini-danger" data-remove-segment="${index}" title="Remove segment">×</button></div><input class="form-control" data-segment-service="${index}" value="${escapeHtml(segment.service || "")}" placeholder="${escapeHtml(placeholder)}" /></div>`;
+};
+
+renderRouteEditorSegments = function() {
+  const node = el("route-segments");
+  if (!node) return;
+  routeEditorSegments = routeEditorSegments.map(normalizeRouteSegment);
+  node.innerHTML = routeEditorSegments.map((segment, index) => routeSegmentEditorHtml(segment, index)).join("");
+
+  node.querySelectorAll("[data-segment-mode]").forEach(select => select.addEventListener("change", async () => {
+    const index = Number(select.dataset.segmentMode);
+    const mode = select.value;
+    if ((mode === "rail" || mode === "tram") && !surfaceCoreLoaded) await loadSurfaceNetworks();
+    routeEditorSegments[index] = normalizeRouteSegment({ mode, service: mode === "metro" ? "piccadilly" : (mode === "rail" ? [...surfaceLineById.values()].find(line => line.family === "rail")?.id || "" : mode === "tram" ? [...surfaceLineById.values()].find(line => line.family === "tram")?.id || "" : "") });
+    renderRouteEditorSegments();
+  }));
+
+  node.querySelectorAll("[data-segment-service]").forEach(control => {
+    if (control.tagName === "SELECT") {
+      control.addEventListener("change", () => {
+        const index = Number(control.dataset.segmentService);
+        routeEditorSegments[index].service = control.value;
+        routeEditorSegments[index].startStationId = "";
+        routeEditorSegments[index].endStationId = "";
+        routeEditorSegments[index].startStationName = "";
+        routeEditorSegments[index].endStationName = "";
+        renderRouteEditorSegments();
+      });
+    } else {
+      control.addEventListener("input", () => {
+        routeEditorSegments[Number(control.dataset.segmentService)].service = control.value;
+      });
+    }
+  });
+
+  node.querySelectorAll("[data-segment-start]").forEach(control => control.addEventListener("change", () => {
+    const index = Number(control.dataset.segmentStart);
+    const segment = routeEditorSegments[index];
+    segment.startStationId = control.value;
+    segment.startStationName = getStationForSegment(segment.mode, control.value)?.name || "";
+    if (segment.endStationId === segment.startStationId) { segment.endStationId = ""; segment.endStationName = ""; }
+    renderRouteEditorSegments();
+  }));
+
+  node.querySelectorAll("[data-segment-end]").forEach(control => control.addEventListener("change", () => {
+    const index = Number(control.dataset.segmentEnd);
+    const segment = routeEditorSegments[index];
+    segment.endStationId = control.value;
+    segment.endStationName = getStationForSegment(segment.mode, control.value)?.name || "";
+    if (segment.endStationId === segment.startStationId) { segment.endStationId = ""; segment.endStationName = ""; showToast("Start and end stations need to be different."); }
+    renderRouteEditorSegments();
+  }));
+
+  node.querySelectorAll("[data-remove-segment]").forEach(button => button.addEventListener("click", () => {
+    routeEditorSegments.splice(Number(button.dataset.removeSegment), 1);
+    if (!routeEditorSegments.length) routeEditorSegments.push(normalizeRouteSegment({ mode: "metro", service: "piccadilly" }));
+    renderRouteEditorSegments();
+  }));
+
+  renderRouteHighlights(routeEditorSegments, { preview: true });
+};
+
+openRouteEditor = function() {
+  routeEditorSegments = [normalizeRouteSegment({ mode: "metro", service: "piccadilly" })];
+  el("route-name-input").value = "";
+  renderRouteEditorSegments();
+  el("route-editor-sheet").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+  restorePanelPosition(el("route-editor-sheet"));
+  bringPanelToFront(el("route-editor-sheet"));
+};
+
+closeRouteEditor = function(updateBody = true) {
+  el("route-editor-sheet").classList.add("hidden");
+  routeEditorSegments = [];
+  clearRouteHighlights();
+  if (updateBody && allOtherSheetsClosed("route-editor-sheet")) document.body.classList.remove("detail-open");
+};
+
+addRouteEditorSegment = function() {
+  routeEditorSegments.push(normalizeRouteSegment({ mode: "metro", service: "piccadilly" }));
+  renderRouteEditorSegments();
+};
+
+startRouteWithSegment = async function(segment) {
+  transientTransportSelection = null;
+  persistentTransportFocus = null;
+  updateItemFocusChip();
+  const normalized = normalizeRouteSegment(segment);
+  if ((normalized.mode === "rail" || normalized.mode === "tram") && !surfaceCoreLoaded) await loadSurfaceNetworks();
+  closeDetail(false);
+  routeEditorSegments = [normalized];
+  el("route-name-input").value = "";
+  renderRouteEditorSegments();
+  el("route-editor-sheet").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+  restorePanelPosition(el("route-editor-sheet"));
+  bringPanelToFront(el("route-editor-sheet"));
+  showToast(normalized.startStationId ? "Route started here. Choose the other station on the map or in the route panel." : "Route started. Choose start and end stations.", 2800);
+};
+
+function routeSegmentValid(segment) {
+  if (segment.mode === "walk") return !!segment.service;
+  if (segment.mode === "bus") return !!segment.service;
+  if (["metro", "rail", "tram"].includes(segment.mode)) return !!segment.service && !!segment.startStationId && !!segment.endStationId;
+  return false;
+}
+
+saveFavoriteRouteFromEditor = function() {
+  const name = el("route-name-input").value.trim();
+  const segments = routeEditorSegments.map(normalizeRouteSegment).filter(segment => segment.mode === "walk" || segment.mode === "bus" || segment.service);
+  if (!name) { showToast("Give the route a name first."); return; }
+  const incomplete = segments.find(segment => ["metro", "rail", "tram"].includes(segment.mode) && !routeSegmentValid(segment));
+  if (incomplete) { showToast("Choose both start and end stations for every transport segment.", 3000); return; }
+  if (!segments.length) { showToast("Add at least one route segment."); return; }
+  const route = { id: `route-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, name, segments, useCount: 0, createdAt: Date.now() };
+  favoriteRoutes.push(route);
+  saveFavoriteRoutes();
+  closeRouteEditor();
+  renderFavoritesSheet();
+  refreshSearchIfOpen();
+  showToast(`Saved route: ${route.name}`);
+};
+
+segmentDisplayName = function(rawSegment) {
+  const segment = normalizeRouteSegment(rawSegment);
+  if (segment.mode === "metro") {
+    const line = TUBE_LINE_BY_ID.get(segment.service);
+    const base = line ? formatLineName(line) : segment.service || "Metro";
+    return segment.startStationId && segment.endStationId ? `${base} · ${segment.startStationName || getStationForSegment("metro", segment.startStationId)?.name || "Start"} → ${segment.endStationName || getStationForSegment("metro", segment.endStationId)?.name || "End"}` : base;
+  }
+  if (segment.mode === "rail" || segment.mode === "tram") {
+    const line = surfaceLineById.get(segment.service);
+    const base = line ? formatSurfaceLineName(line) : segment.service || (segment.mode === "tram" ? "Tram" : "Rail");
+    return segment.startStationId && segment.endStationId ? `${base} · ${segment.startStationName || getStationForSegment(segment.mode, segment.startStationId)?.name || "Start"} → ${segment.endStationName || getStationForSegment(segment.mode, segment.endStationId)?.name || "End"}` : base;
+  }
+  if (segment.mode === "bus") return `Bus ${segment.service}`;
+  if (segment.mode === "walk") return segment.service || "Walk";
+  return segment.service || segment.mode;
+};
+
+routeSegmentSummary = function(route) {
+  const parts = (route?.segments || []).map(segmentDisplayName);
+  return parts.length ? parts.slice(0, 3).join(" • ") + (parts.length > 3 ? " • …" : "") : "Favorite route";
+};
+
+function useStationInOpenRoute(station, family) {
+  if (el("route-editor-sheet")?.classList.contains("hidden")) return false;
+  const services = family === "metro" ? (station.lines || []).map(line => line.id) : (station.services || []).filter(line => line.family === family).map(line => line.id);
+  for (let index = routeEditorSegments.length - 1; index >= 0; index--) {
+    const segment = routeEditorSegments[index];
+    if (segment.mode !== family || !services.includes(segment.service)) continue;
+    if (!segment.startStationId) {
+      segment.startStationId = station.id; segment.startStationName = station.name;
+      renderRouteEditorSegments(); closeDetail(); showToast(`${station.name} set as the segment start.`); return true;
+    }
+    if (!segment.endStationId && segment.startStationId !== station.id) {
+      segment.endStationId = station.id; segment.endStationName = station.name;
+      renderRouteEditorSegments(); closeDetail(); showToast(`${station.name} set as the segment end.`); return true;
+    }
+  }
+  const service = services[0];
+  if (!service) { showToast("This station has no matching service for the open route segment."); return true; }
+  routeEditorSegments.push(normalizeRouteSegment({ mode: family, service, startStationId: station.id, startStationName: station.name }));
+  renderRouteEditorSegments();
+  closeDetail();
+  showToast(`New ${family} segment started at ${station.name}.`);
+  return true;
+}
+
+function patchStationRouteAction(family, station) {
+  const button = el("detail-content")?.querySelector("#route-add-station-btn");
+  if (!button) return;
+  const replacement = button.cloneNode(true);
+  button.replaceWith(replacement);
+  const routeOpen = !el("route-editor-sheet")?.classList.contains("hidden");
+  replacement.textContent = routeOpen ? "Use as route endpoint" : "Start route here";
+  replacement.addEventListener("click", () => {
+    if (routeOpen && useStationInOpenRoute(station, family)) return;
+    const service = family === "metro" ? station.lines?.[0]?.id : station.services?.find(line => line.family === family)?.id;
+    startRouteWithSegment({ mode: family, service: service || "", kind: "line", startStationId: station.id, startStationName: station.name });
+  });
+}
+
+const showStationInfoV13EFinal = showStationInfo;
+showStationInfo = async function(station) {
+  await showStationInfoV13EFinal(station);
+  patchStationRouteAction("metro", station);
+  bringPanelToFront(el("detail-card"));
+};
+
+const showSurfaceStationInfoV13EFinal = showSurfaceStationInfo;
+showSurfaceStationInfo = async function(station) {
+  await showSurfaceStationInfoV13EFinal(station);
+  const family = station.services?.some(line => line.family === "rail") ? "rail" : "tram";
+  patchStationRouteAction(family, station);
+  bringPanelToFront(el("detail-card"));
+};
+
+/* --- Route graph + glow overlays --- */
+function clearRouteHighlights() {
+  routeHighlightPolylines.forEach(polyline => polyline.setMap(null));
+  routeHighlightPolylines = [];
+}
+
+function transportGeometryForSegment(segment) {
+  return segment.mode === "metro" ? lineGeometryRegistry.get(segment.service) || [] : surfaceGeometryRegistry.get(segment.service) || [];
+}
+
+function routeGraphKey(point) {
+  return `${Number(point.lat).toFixed(5)},${Number(point.lng).toFixed(5)}`;
+}
+
+function getRouteGraph(segment) {
+  const cacheKey = `${segment.mode}:${segment.service}`;
+  if (routeGraphCache.has(cacheKey)) return routeGraphCache.get(cacheKey);
+  const paths = transportGeometryForSegment(segment);
+  const nodes = new Map();
+  const adjacency = new Map();
+  const ensure = point => {
+    const key = routeGraphKey(point);
+    if (!nodes.has(key)) nodes.set(key, { key, lat: Number(point.lat), lng: Number(point.lng) });
+    if (!adjacency.has(key)) adjacency.set(key, []);
+    return key;
+  };
+  const endpointKeys = [];
+  for (const rawPath of paths) {
+    const path = v13fThinPath(rawPath, 850);
+    if (path.length < 2) continue;
+    const pathKeys = path.map(ensure);
+    endpointKeys.push(pathKeys[0], pathKeys[pathKeys.length - 1]);
+    for (let i = 0; i < pathKeys.length - 1; i++) {
+      const a = pathKeys[i], b = pathKeys[i+1];
+      const weight = haversineKm(nodes.get(a), nodes.get(b));
+      adjacency.get(a).push([b, weight]);
+      adjacency.get(b).push([a, weight]);
+    }
+  }
+  const endpoints = [...new Set(endpointKeys)];
+  for (let i = 0; i < endpoints.length; i++) for (let j = i + 1; j < endpoints.length; j++) {
+    const a = nodes.get(endpoints[i]), b = nodes.get(endpoints[j]);
+    const distance = haversineKm(a, b);
+    if (distance <= 0.055) {
+      adjacency.get(a.key).push([b.key, distance]);
+      adjacency.get(b.key).push([a.key, distance]);
+    }
+  }
+  const graph = { nodes, adjacency };
+  routeGraphCache.set(cacheKey, graph);
+  return graph;
+}
+
+function nearestGraphNode(graph, position) {
+  let best = null, bestDistance = Infinity;
+  for (const node of graph.nodes.values()) {
+    const distance = haversineKm(position, node);
+    if (distance < bestDistance) { bestDistance = distance; best = node.key; }
+  }
+  return best;
+}
+
+function shortestGraphPath(graph, startKey, endKey) {
+  if (!startKey || !endKey) return [];
+  const dist = new Map([[startKey, 0]]), previous = new Map(), visited = new Set();
+  const queue = [[0, startKey]];
+  while (queue.length) {
+    queue.sort((a,b) => a[0] - b[0]);
+    const [currentDistance, current] = queue.shift();
+    if (visited.has(current)) continue;
+    visited.add(current);
+    if (current === endKey) break;
+    for (const [next, weight] of graph.adjacency.get(current) || []) {
+      if (visited.has(next)) continue;
+      const candidate = currentDistance + weight;
+      if (candidate < (dist.get(next) ?? Infinity)) {
+        dist.set(next, candidate); previous.set(next, current); queue.push([candidate, next]);
+      }
+    }
+  }
+  if (!dist.has(endKey)) return [];
+  const keys = [];
+  let cursor = endKey;
+  while (cursor) { keys.push(cursor); if (cursor === startKey) break; cursor = previous.get(cursor); }
+  keys.reverse();
+  return keys[0] === startKey ? keys.map(key => graph.nodes.get(key)).filter(Boolean).map(node => ({ lat: node.lat, lng: node.lng })) : [];
+}
+
+function precisePathForSegment(rawSegment) {
+  const segment = normalizeRouteSegment(rawSegment);
+  if (!["metro", "rail", "tram"].includes(segment.mode) || !segment.service || !segment.startStationId || !segment.endStationId) return [];
+  const start = getStationForSegment(segment.mode, segment.startStationId);
+  const end = getStationForSegment(segment.mode, segment.endStationId);
+  if (!start || !end) return [];
+  const startPos = { lat: Number(start.lat), lng: Number(start.lon ?? start.lng) };
+  const endPos = { lat: Number(end.lat), lng: Number(end.lon ?? end.lng) };
+  const graph = getRouteGraph(segment);
+  const path = shortestGraphPath(graph, nearestGraphNode(graph, startPos), nearestGraphNode(graph, endPos));
+  return path.length ? [startPos, ...path, endPos] : [startPos, endPos];
+}
+
+function segmentColor(segment) {
+  if (segment.mode === "metro") return TUBE_LINE_BY_ID.get(segment.service)?.color || "#79B6FF";
+  return surfaceLineById.get(segment.service)?.color || "#79B6FF";
+}
+
+function renderRouteHighlights(segments, options = {}) {
+  clearRouteHighlights();
+  if (!map) return;
+  for (const raw of segments || []) {
+    const segment = normalizeRouteSegment(raw);
+    const path = precisePathForSegment(segment);
+    if (path.length < 2) continue;
+    const color = segmentColor(segment);
+    const halo = new google.maps.Polyline({ map, path, strokeColor: "#FFFFFF", strokeOpacity: options.preview ? .82 : .92, strokeWeight: 11, zIndex: 88, clickable: false });
+    const glow = new google.maps.Polyline({ map, path, strokeColor: color, strokeOpacity: 1, strokeWeight: 6, zIndex: 89, clickable: false });
+    routeHighlightPolylines.push(halo, glow);
+  }
+}
+
+function refreshPreciseRouteHighlights() {
+  const routeEditorOpen = !el("route-editor-sheet")?.classList.contains("hidden");
+  if (routeEditorOpen) { renderRouteHighlights(routeEditorSegments, { preview: true }); return; }
+  const route = getActiveFavoriteRoute();
+  if (route) { renderRouteHighlights(route.segments || [], { preview: false }); return; }
+  clearRouteHighlights();
+}
+
+const activateFavoriteRouteV13EFinal = activateFavoriteRoute;
+activateFavoriteRoute = function(routeId, options = {}) {
+  activateFavoriteRouteV13EFinal(routeId, options);
+  const route = favoriteRoutes.find(item => item.id === routeId);
+  if (route) renderRouteHighlights(route.segments || [], { preview: false });
+};
+
+const clearFavoriteRouteFocusV13EFinal = clearFavoriteRouteFocus;
+clearFavoriteRouteFocus = function() {
+  clearFavoriteRouteFocusV13EFinal();
+  clearRouteHighlights();
+};
+
+/* --- Desktop movable panels; mobile remains stacked bottom-sheet UI --- */
+function loadPanelPositions() {
+  try { return JSON.parse(localStorage.getItem(V13F_PANEL_POSITIONS_STORAGE) || "{}") || {}; } catch { return {}; }
+}
+
+function savePanelPosition(panel) {
+  if (!panel?.id || window.innerWidth <= 720) return;
+  const rect = panel.getBoundingClientRect();
+  const positions = loadPanelPositions();
+  positions[panel.id] = { left: rect.left, top: rect.top };
+  try { localStorage.setItem(V13F_PANEL_POSITIONS_STORAGE, JSON.stringify(positions)); } catch {}
+}
+
+function restorePanelPosition(panel) {
+  if (!panel?.id || window.innerWidth <= 720) return;
+  const position = loadPanelPositions()[panel.id];
+  if (!position) return;
+  panel.style.left = `${Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, position.left))}px`;
+  panel.style.top = `${Math.max(8, Math.min(window.innerHeight - 100, position.top))}px`;
+  panel.style.right = "auto";
+  panel.style.bottom = "auto";
+}
+
+function bringPanelToFront(panel) {
+  if (!panel) return;
+  panelZCounter += 1;
+  panel.style.zIndex = String(panelZCounter);
+}
+
+function enablePanelDrag(panel) {
+  if (!panel || panel.dataset.dragReady === "true") return;
+  panel.dataset.dragReady = "true";
+  panel.addEventListener("pointerdown", () => bringPanelToFront(panel));
+  const handle = panel.querySelector(".sheet-handle");
+  if (!handle) return;
+  handle.addEventListener("pointerdown", event => {
+    if (window.innerWidth <= 720) return;
+    event.preventDefault();
+    bringPanelToFront(panel);
+    const rect = panel.getBoundingClientRect();
+    const startX = event.clientX, startY = event.clientY;
+    const originLeft = rect.left, originTop = rect.top;
+    handle.setPointerCapture?.(event.pointerId);
+    const move = moveEvent => {
+      const left = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, originLeft + moveEvent.clientX - startX));
+      const top = Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, originTop + moveEvent.clientY - startY));
+      panel.style.left = `${left}px`; panel.style.top = `${top}px`; panel.style.right = "auto"; panel.style.bottom = "auto";
+    };
+    const end = () => { document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", end); savePanelPosition(panel); };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", end, { once: true });
+  });
+  restorePanelPosition(panel);
+}
+
+function initV13FPanelWorkspace() {
+  ["detail-card", "route-editor-sheet", "favorites-sheet", "add-sheet", "place-editor-sheet", "location-search-sheet"].map(el).filter(Boolean).forEach(enablePanelDrag);
+}
+
+const openDetailV13EFinal = openDetail;
+openDetail = function() {
+  openDetailV13EFinal();
+  restorePanelPosition(el("detail-card"));
+  bringPanelToFront(el("detail-card"));
+};
+
+/* --- v1.3F init and UI wiring --- */
+const initMapV13EFinal = initMap;
+initMap = function() {
+  initMapV13EFinal();
+  initV13FPanelWorkspace();
+  syncV13FCityButtons();
+  map.addListener("zoom_changed", refreshBoroughLabelVisibility);
+  if (cityInfoState.districts || cityInfoState.weather) ensureBoroughData().then(async () => {
+    if (cityInfoState.weather) await ensureBoroughWeather();
+    applyV13FCityInfoState();
+  }).catch(console.warn);
+  if (cityInfoState.wind) ensureWindOverlay().then(applyV13FCityInfoState).catch(console.warn);
+  if ((layerState.rail || layerState.tram) && !surfaceCoreLoaded) {
+    loadSurfaceNetworks().then(() => {
+      routeGraphCache.clear();
+      applyLayerState();
+      if (layerState.rail && !nationalRailLoaded) {
+        const load = () => ensureNationalRailLoaded().then(() => { routeGraphCache.clear(); applyLayerState(); });
+        if ("requestIdleCallback" in window) requestIdleCallback(load, { timeout: 1800 }); else setTimeout(load, 900);
+      }
+    });
+  }
+};
+
+document.querySelectorAll("[data-city-layer]").forEach(button => button.addEventListener("click", () => toggleCityInfoLayer(button.dataset.cityLayer)));
+syncV13FCityButtons();
 
 
 /* ---------- Controls ---------- */

@@ -10,7 +10,7 @@
   <title>London Life Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.3e" />
+  <link rel="stylesheet" href="styles.css?v=1.3f" />
 </head>
 <body>
   <main id="app">
@@ -93,9 +93,9 @@
             </div>
           </div>
           <div class="layer-toggle-row">
-            <button class="panel-layer-toggle coming-toggle" data-layer-coming="districts" aria-pressed="false"><span class="panel-layer-icon">▦</span><span class="panel-layer-label">Districts</span><span class="soon-badge">F</span></button>
-            <button class="panel-layer-toggle coming-toggle" data-layer-coming="weather" aria-pressed="false"><span class="panel-layer-icon">℃</span><span class="panel-layer-label">Weather</span><span class="soon-badge">F</span></button>
-            <button class="panel-layer-toggle coming-toggle" data-layer-coming="wind" aria-pressed="false"><span class="panel-layer-icon">➤</span><span class="panel-layer-label">Wind</span><span class="soon-badge">F</span></button>
+            <button id="panel-districts-toggle" class="panel-layer-toggle" data-city-layer="districts" aria-pressed="false"><span class="panel-layer-icon">▦</span><span class="panel-layer-label">Districts</span></button>
+            <button id="panel-weather-toggle" class="panel-layer-toggle" data-city-layer="weather" aria-pressed="false"><span class="panel-layer-icon">℃</span><span class="panel-layer-label">Weather</span></button>
+            <button id="panel-wind-toggle" class="panel-layer-toggle" data-city-layer="wind" aria-pressed="false"><span class="panel-layer-icon">➤</span><span class="panel-layer-label">Wind</span></button>
             <button id="panel-traffic-toggle" class="panel-layer-toggle" aria-pressed="false"><span class="panel-layer-icon">≋</span><span class="panel-layer-label">Traffic</span></button>
           </div>
         </section>
@@ -127,7 +127,7 @@
     </div>
 
     <div id="network-status" class="network-status glass">Loading Tube network…</div>
-    <div class="attribution glass">Transport data © TfL · Tube track geometry © OpenStreetMap contributors</div>
+    <div class="attribution glass">Transport data © TfL · Tube track geometry © OpenStreetMap contributors · Weather © Open-Meteo</div>
 
     <section id="detail-card" class="detail-card glass hidden" aria-live="polite" aria-label="Map information">
       <div class="sheet-handle" aria-hidden="true"></div>
@@ -206,7 +206,7 @@
       <div id="route-segments" class="route-segments"></div>
       <button id="add-route-segment-btn" class="secondary-btn compact-btn">＋ Add segment</button>
       <button id="save-route-btn" class="primary-btn full-btn">Save favorite route</button>
-      <div class="fineprint detail-section">Metro, Rail and Tram segments can be isolated on the map now. Bus segments are saved for the later directions build.</div>
+      <div class="fineprint detail-section">Choose a service plus start and end stations. Finished transport segments glow on the map. Bus segments are saved for the later directions build.</div>
     </section>
 
     <section id="key-modal" class="modal">
@@ -257,6 +257,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.3e"></script>
+  <script src="app.js?v=1.3f"></script>
 </body>
 </html>
