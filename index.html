@@ -10,52 +10,108 @@
   <title>London Life Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.3d" />
+  <link rel="stylesheet" href="styles.css?v=1.3e" />
 </head>
 <body>
   <main id="app">
     <div id="map" aria-label="Interactive London map"></div>
 
-    <section class="search-panel" aria-label="Search and layers">
-      <div class="search-box glass">
-        <span class="search-icon" aria-hidden="true">⌕</span>
-        <input
-          id="search-input"
-          type="search"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          placeholder="Search stations, lines, places…"
-          aria-label="Search stations, lines and places"
-        />
-        <button id="search-clear" class="search-clear hidden" aria-label="Clear search">×</button>
-        <div id="search-results" class="search-results hidden" role="listbox"></div>
+    <section class="layers-shell" aria-label="Map layers and search">
+      <button id="layers-menu-btn" class="layers-menu-btn glass" aria-expanded="false" aria-controls="layers-panel" aria-label="Open map layers" title="Layers">▱</button>
+
+      <div id="layers-panel" class="layers-panel glass hidden">
+        <div class="layers-panel-head">
+          <div>
+            <div class="panel-kicker">MAP OVERLAYS</div>
+            <div class="panel-title">Layers</div>
+          </div>
+          <button id="layers-panel-close" class="panel-close" aria-label="Close layers">×</button>
+        </div>
+
+        <div class="panel-search-wrap">
+          <div class="search-box panel-search-box">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input
+              id="search-input"
+              type="search"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              placeholder="Search London…"
+              aria-label="Search London"
+            />
+            <button id="search-clear" class="search-clear hidden" aria-label="Clear search">×</button>
+            <div id="search-results" class="search-results hidden" role="listbox"></div>
+          </div>
+        </div>
+
+        <section class="layer-group" aria-label="Favorite place layers">
+          <div class="layer-group-head">
+            <div>
+              <div class="layer-group-title">FAVORITES</div>
+              <div class="layer-group-sub">Choose any combination</div>
+            </div>
+            <button id="favorites-manage-btn" class="tiny-panel-action">Manage</button>
+          </div>
+          <div id="favorite-category-row" class="layer-toggle-row favorite-toggle-row" aria-label="Favorite categories">
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="all" aria-pressed="false"><span class="panel-layer-icon">★</span><span class="panel-layer-label">All</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="School" aria-pressed="false"><span class="panel-layer-icon">🎓</span><span class="panel-layer-label">School</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Food" aria-pressed="false"><span class="panel-layer-icon">🍴</span><span class="panel-layer-label">Food</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Market" aria-pressed="false"><span class="panel-layer-icon">🛒</span><span class="panel-layer-label">Market</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Health" aria-pressed="false"><span class="panel-layer-icon">♥</span><span class="panel-layer-label">Health</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Home" aria-pressed="false"><span class="panel-layer-icon">⌂</span><span class="panel-layer-label">Home</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Shopping" aria-pressed="false"><span class="panel-layer-icon">🛍</span><span class="panel-layer-label">Shopping</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Sport" aria-pressed="false"><span class="panel-layer-icon">🏃</span><span class="panel-layer-label">Sport</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Social" aria-pressed="false"><span class="panel-layer-icon">☻</span><span class="panel-layer-label">Social</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Transport" aria-pressed="false"><span class="panel-layer-icon">◆</span><span class="panel-layer-label">Transport</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Tech" aria-pressed="false"><span class="panel-layer-icon">⌘</span><span class="panel-layer-label">Tech</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Admin" aria-pressed="false"><span class="panel-layer-icon">▤</span><span class="panel-layer-label">Admin</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Other" aria-pressed="false"><span class="panel-layer-icon">●</span><span class="panel-layer-label">Other</span></button>
+          </div>
+        </section>
+
+        <section class="layer-group" aria-label="Transportation layers">
+          <div class="layer-group-head">
+            <div>
+              <div class="layer-group-title">TRANSPORTATION</div>
+              <div class="layer-group-sub">Stack as many as you want</div>
+            </div>
+          </div>
+          <div class="layer-toggle-row">
+            <button id="panel-metro-toggle" class="panel-layer-toggle" data-layer="metro" aria-pressed="false"><span class="panel-layer-icon metro-symbol">M</span><span class="panel-layer-label">Metro</span></button>
+            <button id="panel-rail-toggle" class="panel-layer-toggle" data-layer="rail" aria-pressed="false"><span class="panel-layer-icon rail-symbol">◇</span><span class="panel-layer-label">Rail</span></button>
+            <button id="panel-tram-toggle" class="panel-layer-toggle" data-layer="tram" aria-pressed="false"><span class="panel-layer-icon tram-symbol">▰</span><span class="panel-layer-label">Tram</span></button>
+            <button class="panel-layer-toggle coming-toggle" data-layer-coming="bus" aria-pressed="false"><span class="panel-layer-icon">B</span><span class="panel-layer-label">Bus</span><span class="soon-badge">later</span></button>
+          </div>
+        </section>
+
+        <section class="layer-group" aria-label="City information layers">
+          <div class="layer-group-head">
+            <div>
+              <div class="layer-group-title">CITY INFORMATION</div>
+              <div class="layer-group-sub">Analytical overlays</div>
+            </div>
+          </div>
+          <div class="layer-toggle-row">
+            <button class="panel-layer-toggle coming-toggle" data-layer-coming="districts" aria-pressed="false"><span class="panel-layer-icon">▦</span><span class="panel-layer-label">Districts</span><span class="soon-badge">F</span></button>
+            <button class="panel-layer-toggle coming-toggle" data-layer-coming="weather" aria-pressed="false"><span class="panel-layer-icon">℃</span><span class="panel-layer-label">Weather</span><span class="soon-badge">F</span></button>
+            <button class="panel-layer-toggle coming-toggle" data-layer-coming="wind" aria-pressed="false"><span class="panel-layer-icon">➤</span><span class="panel-layer-label">Wind</span><span class="soon-badge">F</span></button>
+            <button id="panel-traffic-toggle" class="panel-layer-toggle" aria-pressed="false"><span class="panel-layer-icon">≋</span><span class="panel-layer-label">Traffic</span></button>
+          </div>
+        </section>
+
+        <div class="layer-panel-footnote">Everything here is a layer. Selecting one never turns another off unless you explicitly tap it again.</div>
       </div>
 
-      <div class="layer-bar glass" aria-label="Map layers">
-        <button id="metro-btn" class="layer-chip" aria-pressed="false">
-          <span class="layer-dot metro-dot"></span>Metro
-        </button>
-        <button id="rail-btn" class="layer-chip" aria-pressed="false">
-          <span class="layer-dot rail-dot"></span>Rail
-        </button>
-        <button id="tram-btn" class="layer-chip" aria-pressed="false">
-          <span class="layer-dot tram-dot"></span>Tram
-        </button>
-        <button id="places-btn" class="layer-chip" aria-pressed="false">
-          <span class="layer-dot places-dot"></span>Places
-        </button>
+      <div class="legacy-layer-controls" aria-hidden="true">
+        <button id="metro-btn"></button><button id="rail-btn"></button><button id="tram-btn"></button><button id="places-btn"></button><button id="favorites-btn"></button><button id="traffic-btn"></button>
       </div>
-      <button id="route-focus-chip" class="route-focus-chip glass hidden" aria-label="Open active favorite route">
-        ★ <span data-route-focus-name></span>
-      </button>
-      <button id="item-focus-chip" class="item-focus-chip glass hidden" aria-label="Exit focused transport item">
-        ◎ <span data-item-focus-name></span> · Exit focus
-      </button>
+
+      <button id="route-focus-chip" class="route-focus-chip glass hidden" aria-label="Open active favorite route">★ <span data-route-focus-name></span></button>
+      <button id="item-focus-chip" class="item-focus-chip glass hidden" aria-label="Exit focused transport item">◎ <span data-item-focus-name></span> · Exit focus</button>
     </section>
 
     <div class="corner-actions">
-      <button id="favorites-btn" class="floating-icon glass" aria-label="Favorites" title="Favorites">★</button>
       <button id="info-btn" class="floating-icon glass" aria-label="Map information" title="Information">ⓘ</button>
       <button id="settings-btn" class="floating-icon glass" aria-label="Settings" title="Settings">⚙</button>
     </div>
@@ -63,7 +119,6 @@
     <section class="base-controls glass" aria-label="Base map controls">
       <button id="roadmap-btn" class="base-control active">Map</button>
       <button id="satellite-btn" class="base-control">Satellite</button>
-      <button id="traffic-btn" class="base-control">Traffic</button>
     </section>
 
     <div class="right-actions" aria-label="Location and add controls">
@@ -119,7 +174,7 @@
       <input id="place-name-input" class="form-control" type="text" placeholder="e.g. Imperial College London" />
       <label class="field-label" for="place-category-input">Category</label>
       <select id="place-category-input" class="form-control">
-        <option>Home</option><option>University</option><option>Health</option><option>Food</option><option>Shopping</option><option>Sports</option><option>Tech</option><option>Transport</option><option>Social</option><option selected>Other</option>
+        <option>School</option><option>Food</option><option>Market</option><option>Health</option><option>Home</option><option>Shopping</option><option>Sport</option><option>Social</option><option>Transport</option><option>Tech</option><option>Admin</option><option selected>Other</option>
       </select>
       <label class="field-label" for="place-note-input">Note</label>
       <input id="place-note-input" class="form-control" type="text" placeholder="Optional note" />
@@ -202,6 +257,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.3d"></script>
+  <script src="app.js?v=1.3e"></script>
 </body>
 </html>

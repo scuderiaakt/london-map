@@ -1,4 +1,4 @@
-/* London Life Map v1.3D
+/* London Life Map v1.3E
    Google Maps basemap + geographic London Underground overlay.
    v1.3D adds Rail + Tram, transport focus, richer information panels and route-building hooks,
    while preserving persistent favorites, geographic Metro and the mobile-first interface.
@@ -3375,6 +3375,578 @@ function clearTfLCache() {
   Object.keys(localStorage).filter(key => key.startsWith(TFL_CACHE_PREFIX) || key.startsWith(SURFACE_CACHE_PREFIX)).forEach(key => localStorage.removeItem(key));
   localStorage.removeItem(TUBE_GEOMETRY_CACHE_KEY);
 }
+
+
+/* ---------- v1.3E: Layers panel + Favorites categories + universal search ---------- */
+const V13E_LAYER_PREFS_STORAGE = "londonMap.layerPrefs.v1";
+const V13E_FAVORITE_FILTERS_STORAGE = "londonMap.favoriteFilters.v1";
+const V13E_RECENT_SEARCHES_STORAGE = "londonMap.recentSearches.v1";
+
+const FAVORITE_CATEGORY_META = [
+  { id: "School", icon: "🎓", color: "#7F77FF" },
+  { id: "Food", icon: "🍴", color: "#C38BFF" },
+  { id: "Market", icon: "🛒", color: "#F4B544" },
+  { id: "Health", icon: "♥", color: "#5FD780" },
+  { id: "Home", icon: "⌂", color: "#64A8FF" },
+  { id: "Shopping", icon: "🛍", color: "#FF7B95" },
+  { id: "Sport", icon: "🏃", color: "#4AD3B4" },
+  { id: "Social", icon: "☻", color: "#FF8EC7" },
+  { id: "Transport", icon: "◆", color: "#FFD25A" },
+  { id: "Tech", icon: "⌘", color: "#B8C1CD" },
+  { id: "Admin", icon: "▤", color: "#9AB4CE" },
+  { id: "Other", icon: "●", color: "#FFB15A" }
+];
+
+let selectedFavoriteCategories = loadV13EFavoriteFilters();
+let editingFrequentPlaceId = null;
+let universalSearchState = { query: "", loading: false, results: [], error: "" };
+let recentSearches = loadV13ERecentSearches();
+let savedLayerPrefs = loadV13ELayerPrefs();
+let externalPlacePulse = null;
+
+function canonicalFavoriteCategory(category = "Other", placeName = "") {
+  const raw = String(category || "Other").trim();
+  const aliases = {
+    University: "School", Education: "School", College: "School",
+    Sports: "Sport", Gym: "Sport", Grocery: "Market", Supermarket: "Market",
+    Pharmacy: "Health", Medical: "Health"
+  };
+  let resolved = aliases[raw] || raw;
+  const marketName = normalizeSearch(placeName);
+  if (resolved === "Food" && /\b(waitrose|tesco|sainsbury|aldi|lidl|morrisons|whole foods|supermarket|grocery|market)\b/.test(marketName)) resolved = "Market";
+  return FAVORITE_CATEGORY_META.some(item => item.id === resolved) ? resolved : "Other";
+}
+
+function migrateV13EFavorites() {
+  let changed = false;
+  frequentPlaces = frequentPlaces.map(place => {
+    const category = canonicalFavoriteCategory(place.category, place.name);
+    const color = placeColorForCategory(category);
+    if (category !== place.category || color !== place.color) changed = true;
+    return { ...place, category, color };
+  });
+  if (changed) saveFrequentPlaces();
+}
+
+function placeColorForCategory(category) {
+  const canonical = canonicalFavoriteCategory(category);
+  return FAVORITE_CATEGORY_META.find(item => item.id === canonical)?.color || "#FFB15A";
+}
+
+function loadV13ELayerPrefs() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(V13E_LAYER_PREFS_STORAGE) || "null");
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {}
+  return { metro: false, rail: false, tram: false, places: false, traffic: false };
+}
+
+function saveV13ELayerPrefs() {
+  try {
+    localStorage.setItem(V13E_LAYER_PREFS_STORAGE, JSON.stringify({
+      metro: !!layerState.metro,
+      rail: !!layerState.rail,
+      tram: !!layerState.tram,
+      places: !!layerState.places,
+      traffic: !!trafficLayer?.getMap?.()
+    }));
+  } catch {}
+}
+
+function restoreV13ELayerPrefs() {
+  layerState.metro = !!savedLayerPrefs.metro;
+  layerState.rail = !!savedLayerPrefs.rail;
+  layerState.tram = !!savedLayerPrefs.tram;
+  layerState.places = !!savedLayerPrefs.places;
+}
+
+function loadV13EFavoriteFilters() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(V13E_FAVORITE_FILTERS_STORAGE) || "null");
+    if (Array.isArray(parsed) && parsed.length) return new Set(parsed);
+  } catch {}
+  return new Set(["all"]);
+}
+
+function saveV13EFavoriteFilters() {
+  try { localStorage.setItem(V13E_FAVORITE_FILTERS_STORAGE, JSON.stringify([...selectedFavoriteCategories])); } catch {}
+}
+
+function loadV13ERecentSearches() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(V13E_RECENT_SEARCHES_STORAGE) || "[]");
+    if (Array.isArray(parsed)) return parsed.filter(Boolean).slice(0, 8);
+  } catch {}
+  return [];
+}
+
+function rememberV13ESearch(text) {
+  const value = String(text || "").trim();
+  if (!value) return;
+  recentSearches = [value, ...recentSearches.filter(item => normalizeSearch(item) !== normalizeSearch(value))].slice(0, 8);
+  try { localStorage.setItem(V13E_RECENT_SEARCHES_STORAGE, JSON.stringify(recentSearches)); } catch {}
+}
+
+function favoriteCategoryVisible(place) {
+  if (selectedFavoriteCategories.has("all")) return true;
+  return selectedFavoriteCategories.has(canonicalFavoriteCategory(place.category, place.name));
+}
+
+function applyFavoriteCategoryVisibility() {
+  const route = getActiveFavoriteRoute();
+  const selection = getTransportSelection();
+  const canShow = layerState.places && !route && !selection;
+  placeOverlays.forEach(overlay => overlay.setVisible(canShow && favoriteCategoryVisible(overlay.place)));
+}
+
+function syncV13EPanelUI() {
+  const layerButtons = {
+    metro: el("panel-metro-toggle"), rail: el("panel-rail-toggle"), tram: el("panel-tram-toggle")
+  };
+  Object.entries(layerButtons).forEach(([name, button]) => {
+    if (!button) return;
+    button.classList.toggle("active", !!layerState[name]);
+    button.setAttribute("aria-pressed", String(!!layerState[name]));
+  });
+
+  document.querySelectorAll("[data-favorite-category]").forEach(button => {
+    const category = button.dataset.favoriteCategory;
+    const active = !!layerState.places && selectedFavoriteCategories.has(category);
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+
+  const trafficButton = el("panel-traffic-toggle");
+  const trafficActive = !!trafficLayer?.getMap?.();
+  if (trafficButton) {
+    trafficButton.classList.toggle("active", trafficActive);
+    trafficButton.setAttribute("aria-pressed", String(trafficActive));
+  }
+}
+
+function toggleLayersPanel(force) {
+  const panel = el("layers-panel");
+  const button = el("layers-menu-btn");
+  if (!panel || !button) return;
+  const open = typeof force === "boolean" ? force : panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !open);
+  button.classList.toggle("active", open);
+  button.setAttribute("aria-expanded", String(open));
+  document.body.classList.toggle("layers-panel-open", open);
+  if (open) syncV13EPanelUI();
+}
+
+function toggleFavoriteCategory(category) {
+  if (category === "all") {
+    if (layerState.places && selectedFavoriteCategories.has("all")) {
+      layerState.places = false;
+    } else {
+      selectedFavoriteCategories = new Set(["all"]);
+      layerState.places = true;
+    }
+  } else {
+    if (!layerState.places || selectedFavoriteCategories.has("all")) {
+      selectedFavoriteCategories = new Set();
+      layerState.places = true;
+    }
+    if (selectedFavoriteCategories.has(category)) selectedFavoriteCategories.delete(category);
+    else selectedFavoriteCategories.add(category);
+    if (!selectedFavoriteCategories.size) layerState.places = false;
+  }
+  saveV13EFavoriteFilters();
+  activeFavoriteRouteId = null;
+  transientTransportSelection = null;
+  persistentTransportFocus = null;
+  updateRouteFocusChip();
+  updateItemFocusChip();
+  applyLayerState();
+}
+
+function toggleV13ETraffic() {
+  if (!map || !trafficLayer) return;
+  const active = !!trafficLayer.getMap();
+  trafficLayer.setMap(active ? null : map);
+  syncV13EPanelUI();
+  saveV13ELayerPrefs();
+}
+
+function categoryFromGooglePlace(type = "", name = "", address = "") {
+  const text = normalizeSearch(`${type} ${name} ${address}`);
+  if (/university|school|college|education|library/.test(text)) return "School";
+  if (/supermarket|grocery|market|convenience store|food store/.test(text)) return "Market";
+  if (/restaurant|cafe|coffee|bakery|meal|food|bar/.test(text)) return "Food";
+  if (/hospital|doctor|pharmacy|dentist|health|medical|physio/.test(text)) return "Health";
+  if (/gym|fitness|stadium|sports|swimming/.test(text)) return "Sport";
+  if (/train|station|transit|subway|tram|airport|bus/.test(text)) return "Transport";
+  if (/electronics|computer|mobile phone/.test(text)) return "Tech";
+  if (/shopping|store|shop|clothing|department store|home goods/.test(text)) return "Shopping";
+  if (/city hall|embassy|government|post office|administrative/.test(text)) return "Admin";
+  return "Other";
+}
+
+function latLngLiteral(location) {
+  if (!location) return null;
+  const lat = typeof location.lat === "function" ? location.lat() : Number(location.lat);
+  const lng = typeof location.lng === "function" ? location.lng() : Number(location.lng);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+}
+
+async function searchAllLondon(query) {
+  const cleaned = String(query || "").trim();
+  if (!cleaned || !map) return;
+  rememberV13ESearch(cleaned);
+  universalSearchState = { query: cleaned, loading: true, results: [], error: "" };
+  renderSearchResults();
+
+  let results = [];
+  let placesError = null;
+  try {
+    const { Place } = await google.maps.importLibrary("places");
+    const request = {
+      textQuery: cleaned,
+      fields: ["id", "displayName", "formattedAddress", "location", "primaryType", "primaryTypeDisplayName"],
+      locationBias: map.getBounds() || undefined,
+      maxResultCount: 7,
+      language: "en-GB",
+      region: "gb"
+    };
+    const response = await Place.searchByText(request);
+    results = (response.places || []).map(place => {
+      const coords = latLngLiteral(place.location);
+      if (!coords) return null;
+      const typeLabel = typeof place.primaryTypeDisplayName === "string" ? place.primaryTypeDisplayName : (place.primaryTypeDisplayName?.text || place.primaryType || "Place");
+      return {
+        type: "external-place",
+        id: place.id || `google-${coords.lat}-${coords.lng}`,
+        name: place.displayName || "Place",
+        address: place.formattedAddress || "",
+        primaryType: place.primaryType || "",
+        typeLabel,
+        category: categoryFromGooglePlace(place.primaryType || typeLabel, place.displayName || "", place.formattedAddress || ""),
+        ...coords
+      };
+    }).filter(Boolean);
+  } catch (err) {
+    placesError = err;
+    console.warn("Places API (New) search unavailable; using Geocoder fallback.", err);
+  }
+
+  if (!results.length && geocoder) {
+    try {
+      const response = await geocoder.geocode({
+        address: cleaned,
+        bounds: map.getBounds() || undefined,
+        region: "GB"
+      });
+      results = (response.results || []).slice(0, 7).map(result => {
+        const coords = latLngLiteral(result.geometry?.location);
+        if (!coords) return null;
+        const type = result.types?.[0] || "place";
+        return {
+          type: "external-place",
+          id: result.place_id || `geocode-${coords.lat}-${coords.lng}`,
+          name: result.address_components?.[0]?.long_name || cleaned,
+          address: result.formatted_address || cleaned,
+          primaryType: type,
+          typeLabel: type.replaceAll("_", " "),
+          category: categoryFromGooglePlace(type, result.formatted_address || cleaned, result.formatted_address || ""),
+          ...coords,
+          fallback: true
+        };
+      }).filter(Boolean);
+    } catch (err) {
+      console.warn("Geocoder fallback also failed.", err);
+      placesError = placesError || err;
+    }
+  }
+
+  if (normalizeSearch(el("search-input")?.value || "") !== normalizeSearch(cleaned)) return;
+  universalSearchState = {
+    query: cleaned,
+    loading: false,
+    results,
+    error: results.length ? "" : (placesError ? "Google place search is not enabled for this API key yet." : "No London place found.")
+  };
+  renderSearchResults();
+}
+
+function buildV13ESearchResults(query) {
+  return buildSearchResults(query);
+}
+
+function renderSearchResults() {
+  const input = el("search-input");
+  const resultsNode = el("search-results");
+  const clearButton = el("search-clear");
+  if (!input || !resultsNode) return;
+  const query = input.value.trim();
+  clearButton?.classList.toggle("hidden", !query);
+
+  if (!query) {
+    universalSearchState = { query: "", loading: false, results: [], error: "" };
+    if (!recentSearches.length) { hideSearchResults(); return; }
+    resultsNode.innerHTML = `<div class="recent-search-label">RECENT SEARCHES</div>` + recentSearches.map((item, index) => `
+      <button class="search-result recent-search-result" data-recent-index="${index}" role="option">
+        <div class="result-icon">↺</div><div><div class="result-title">${escapeHtml(item)}</div><div class="result-sub">Search again</div></div>
+      </button>`).join("");
+    resultsNode.classList.remove("hidden");
+    resultsNode.querySelectorAll("[data-recent-index]").forEach(button => button.addEventListener("click", () => {
+      input.value = recentSearches[Number(button.dataset.recentIndex)] || "";
+      renderSearchResults();
+    }));
+    return;
+  }
+
+  const local = buildV13ESearchResults(query).slice(0, 8);
+  let html = local.map((result, index) => searchResultHtml(result, index)).join("");
+
+  const externalMatchesQuery = normalizeSearch(universalSearchState.query) === normalizeSearch(query);
+  if (externalMatchesQuery && universalSearchState.loading) {
+    html += `<div class="search-status-row">Searching the rest of London…</div>`;
+  } else if (externalMatchesQuery && universalSearchState.results.length) {
+    html += universalSearchState.results.map((result, index) => `
+      <button class="search-result external-place-result" data-external-index="${index}" role="option">
+        <div class="result-icon">＋</div>
+        <div><div class="result-title">${escapeHtml(result.name)}</div><div class="result-sub">${escapeHtml(result.typeLabel || result.category)}${result.address ? ` · ${escapeHtml(result.address)}` : ""}</div></div>
+      </button>`).join("");
+  } else if (externalMatchesQuery && universalSearchState.error) {
+    html += `<div class="search-status-row">${escapeHtml(universalSearchState.error)} You can still search the transport map and your saved places.</div>`;
+  } else {
+    html += `<button class="search-result search-all-result" data-search-all="true" role="option">
+      <div class="result-icon">⌕</div><div><div class="result-title">Search all London for “${escapeHtml(query)}”</div><div class="result-sub">Businesses, cafés, markets, addresses and other real-world places</div></div>
+    </button>`;
+  }
+
+  if (!html) html = `<div class="search-status-row">No result yet.</div>`;
+  resultsNode.innerHTML = html;
+  resultsNode.classList.remove("hidden");
+
+  resultsNode.querySelectorAll("[data-result-index]").forEach(button => button.addEventListener("click", () => {
+    const result = local[Number(button.dataset.resultIndex)];
+    if (result) { rememberV13ESearch(resultTitle(result)); selectSearchResult(result); }
+  }));
+  resultsNode.querySelector("[data-search-all]")?.addEventListener("click", () => searchAllLondon(query));
+  resultsNode.querySelectorAll("[data-external-index]").forEach(button => button.addEventListener("click", () => {
+    const result = universalSearchState.results[Number(button.dataset.externalIndex)];
+    if (result) { rememberV13ESearch(result.name); selectSearchResult(result); }
+  }));
+}
+
+function searchResultHtml(result, index) {
+  if (result.type === "line") return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon" style="background:${result.line.color};color:${idealTextColor(result.line.color)}">${escapeHtml(result.line.code)}</div><div><div class="result-title">${escapeHtml(formatLineName(result.line))}</div><div class="result-sub">Metro line</div></div></button>`;
+  if (result.type === "surface-line") return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon" style="background:${result.line.color};color:${idealTextColor(result.line.color)}">${escapeHtml(result.line.code)}</div><div><div class="result-title">${escapeHtml(formatSurfaceLineName(result.line))}</div><div class="result-sub">${escapeHtml(result.line.family === "tram" ? "Tram" : result.line.kind === "national" ? "National Rail" : "Rail")}</div></div></button>`;
+  if (result.type === "station" || result.type === "surface-station") {
+    const station = result.station;
+    const metro = (station.lines || []).map(formatLineName);
+    const surface = (station.surfaceServices || station.services || []).map(formatSurfaceLineName);
+    return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon">${result.type === "surface-station" ? "R" : "M"}</div><div><div class="result-title">${escapeHtml(station.name)}</div><div class="result-sub">${escapeHtml([...metro, ...surface].join(" · ") || "Transport station")}</div></div></button>`;
+  }
+  if (result.type === "route") return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon">★</div><div><div class="result-title">${escapeHtml(result.route.name)}</div><div class="result-sub">${escapeHtml(routeSegmentSummary(result.route))}</div></div></button>`;
+  const cat = canonicalFavoriteCategory(result.place.category, result.place.name);
+  const meta = FAVORITE_CATEGORY_META.find(item => item.id === cat);
+  return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon" style="color:${meta?.color || "#fff"}">${meta?.icon || "●"}</div><div><div class="result-title">${escapeHtml(result.place.name)}</div><div class="result-sub">${escapeHtml(cat)} · Favorite place</div></div></button>`;
+}
+
+function selectSearchResult(result) {
+  if (!result) return;
+  hideSearchResults();
+  toggleLayersPanel(false);
+  el("search-input")?.blur();
+  if (result.type === "external-place") { showExternalPlaceInfo(result); return; }
+  if (result.type === "route") { activateFavoriteRoute(result.route.id); return; }
+  if (result.type === "place") {
+    clearFavoriteRouteFocus(); transientTransportSelection = null; persistentTransportFocus = null;
+    layerState.places = true;
+    const cat = canonicalFavoriteCategory(result.place.category, result.place.name);
+    if (!selectedFavoriteCategories.has("all") && !selectedFavoriteCategories.has(cat)) selectedFavoriteCategories.add(cat);
+    applyLayerState();
+    map.panTo({ lat: result.place.lat, lng: result.place.lng }); map.setZoom(Math.max(map.getZoom() || 15, 16)); showPlaceInfo(result.place); return;
+  }
+  if (result.type === "station") { map.panTo({ lat: result.station.lat, lng: result.station.lon }); map.setZoom(16); selectTubeStation(result.station, { showInfo: true }); return; }
+  if (result.type === "surface-station") { map.panTo({ lat: result.station.lat, lng: result.station.lon }); map.setZoom(16); selectSurfaceStation(result.station, { showInfo: true }); return; }
+  if (result.type === "surface-line") { selectSurfaceLine(result.line.id, { fit: true, showInfo: true }); return; }
+  if (result.type === "line") selectMetroLine(result.line.id, { fit: true, showInfo: true });
+}
+
+function pulseExternalPlace(coords) {
+  if (externalPlacePulse) externalPlacePulse.setMap(null);
+  externalPlacePulse = new google.maps.Circle({
+    map,
+    center: coords,
+    radius: 18,
+    clickable: false,
+    strokeColor: "#79B6FF",
+    strokeOpacity: .95,
+    strokeWeight: 3,
+    fillColor: "#79B6FF",
+    fillOpacity: .20,
+    zIndex: 90
+  });
+  setTimeout(() => { externalPlacePulse?.setMap(null); externalPlacePulse = null; }, 9000);
+}
+
+function showExternalPlaceInfo(place) {
+  const coords = { lat: Number(place.lat), lng: Number(place.lng) };
+  map.panTo(coords);
+  if ((map.getZoom() || 0) < 17) map.setZoom(17);
+  pulseExternalPlace(coords);
+  const content = el("detail-content");
+  content.innerHTML = `
+    <div class="detail-label">LONDON SEARCH</div>
+    <h2>${escapeHtml(place.name)}</h2>
+    <div class="sub">${escapeHtml(place.typeLabel || "Place")}${place.address ? ` · ${escapeHtml(place.address)}` : ""}</div>
+    <div class="detail-section"><div class="info-row"><span>Suggested category</span><b>${escapeHtml(place.category || "Other")}</b></div><div class="info-row"><span>Coordinates</span><b>${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}</b></div></div>
+    <div class="detail-actions compact-action-row"><button class="primary-btn compact-btn" id="external-save-place-btn">＋ Add to Favorites</button></div>`;
+  content.querySelector("#external-save-place-btn")?.addEventListener("click", () => {
+    closeDetail(false);
+    openPlaceEditor(coords, place.name, place.address || "", place.category || "Other");
+  });
+  openDetail();
+}
+
+function openPlaceEditor(coords, suggestedName = "", suggestedNote = "", suggestedCategory = "Other", existingId = null) {
+  editingFrequentPlaceId = existingId || null;
+  pendingPlaceCoordinates = { lat: Number(coords.lat), lng: Number(coords.lng) };
+  el("place-name-input").value = suggestedName || "";
+  const category = canonicalFavoriteCategory(suggestedCategory, suggestedName);
+  el("place-category-input").value = category;
+  el("place-note-input").value = suggestedNote || "";
+  el("place-coordinate-readout").textContent = `${pendingPlaceCoordinates.lat.toFixed(5)}, ${pendingPlaceCoordinates.lng.toFixed(5)}`;
+  const heading = el("place-editor-sheet")?.querySelector("h2");
+  if (heading) heading.textContent = editingFrequentPlaceId ? "Edit favorite place" : "Save this place";
+  const saveButton = el("save-place-btn");
+  if (saveButton) saveButton.textContent = editingFrequentPlaceId ? "Save changes" : "Save favorite place";
+  closeAddSheet(false);
+  closeDetail(false);
+  el("place-editor-sheet").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+  setTimeout(() => el("place-name-input").focus(), 50);
+}
+
+function openPlaceEditorForEdit(place) {
+  openPlaceEditor({ lat: place.lat, lng: place.lng }, place.name, place.note || "", place.category || "Other", place.id);
+}
+
+function closePlaceEditor(updateBody = true) {
+  el("place-editor-sheet").classList.add("hidden");
+  pendingPlaceCoordinates = null;
+  editingFrequentPlaceId = null;
+  if (updateBody && allOtherSheetsClosed("place-editor-sheet")) document.body.classList.remove("detail-open");
+}
+
+function savePlaceFromEditor() {
+  const name = el("place-name-input").value.trim();
+  if (!name || !pendingPlaceCoordinates) { showToast("Give the place a name first."); return; }
+  const category = canonicalFavoriteCategory(el("place-category-input").value || "Other", name);
+  const note = el("place-note-input").value.trim();
+  let place;
+  if (editingFrequentPlaceId) {
+    const index = frequentPlaces.findIndex(item => item.id === editingFrequentPlaceId);
+    if (index >= 0) {
+      place = { ...frequentPlaces[index], name, lat: pendingPlaceCoordinates.lat, lng: pendingPlaceCoordinates.lng, category, color: placeColorForCategory(category), note, updatedAt: Date.now() };
+      frequentPlaces[index] = place;
+    }
+  }
+  if (!place) {
+    place = { id: `place-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, name, lat: pendingPlaceCoordinates.lat, lng: pendingPlaceCoordinates.lng, category, color: placeColorForCategory(category), anchor: false, note, createdAt: Date.now() };
+    frequentPlaces.push(place);
+  }
+  saveFrequentPlaces();
+  createPlaceMarkers();
+  layerState.places = true;
+  selectedFavoriteCategories = new Set(["all"]);
+  saveV13EFavoriteFilters();
+  applyLayerState();
+  closePlaceEditor();
+  map.panTo({ lat: place.lat, lng: place.lng });
+  if ((map.getZoom() || 0) < 16) map.setZoom(16);
+  showPlaceInfo(place);
+  renderFavoritesSheet();
+  refreshSearchIfOpen();
+  showToast(`${place.name} saved.`);
+}
+
+function showPlaceInfo(place) {
+  const content = el("detail-content");
+  const category = canonicalFavoriteCategory(place.category, place.name);
+  const isTransport = category === "Transport";
+  const profile = isTransport ? stationProfile(place.name, []) : null;
+  content.innerHTML = `
+    <div class="detail-label">${escapeHtml(category.toUpperCase())}</div>
+    <h2>${escapeHtml(place.name)}</h2>
+    <div class="sub">${escapeHtml(place.note || "Favorite place")}</div>
+    ${profile ? `<div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(profile.about)}</p></div><div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>${escapeHtml(profile.background)}</p></div>` : ""}
+    <div class="detail-section"><div class="info-row"><span>Category</span><b>${escapeHtml(category)}</b></div><div class="info-row"><span>Coordinates</span><b>${Number(place.lat).toFixed(5)}, ${Number(place.lng).toFixed(5)}</b></div></div>
+    <div class="detail-actions place-action-row"><button class="mini-edit-btn" id="edit-place-btn">Edit</button><button class="mini-danger-soft" id="delete-place-btn">Delete</button></div>`;
+  content.querySelector("#edit-place-btn")?.addEventListener("click", () => openPlaceEditorForEdit(place));
+  content.querySelector("#delete-place-btn")?.addEventListener("click", () => deleteFrequentPlace(place.id));
+  openDetail();
+}
+
+function renderFavoritesSheet() {
+  const placesNode = el("favorite-places-list");
+  const routesNode = el("favorite-routes-list");
+  if (!placesNode || !routesNode) return;
+  const sortedPlaces = frequentPlaces.slice().sort((a,b) => canonicalFavoriteCategory(a.category,a.name).localeCompare(canonicalFavoriteCategory(b.category,b.name)) || a.name.localeCompare(b.name));
+  placesNode.innerHTML = sortedPlaces.length ? sortedPlaces.map(place => {
+    const cat = canonicalFavoriteCategory(place.category, place.name);
+    const meta = FAVORITE_CATEGORY_META.find(item => item.id === cat);
+    return `<div class="favorite-row"><button class="favorite-main" data-open-place="${escapeHtml(place.id)}"><span class="favorite-symbol" style="background:${meta?.color || place.color}">${meta?.icon || "●"}</span><span><b>${escapeHtml(place.name)}</b><small>${escapeHtml(cat)}${place.note ? ` · ${escapeHtml(place.note)}` : ""}</small></span></button><button class="favorite-delete" data-delete-place="${escapeHtml(place.id)}" title="Delete">×</button></div>`;
+  }).join("") : `<div class="empty-state">No favorite places yet.</div>`;
+  const sortedRoutes = favoriteRoutes.slice().sort((a,b) => Number(b.useCount || 0) - Number(a.useCount || 0) || a.name.localeCompare(b.name));
+  routesNode.innerHTML = sortedRoutes.length ? sortedRoutes.map(route => `<div class="favorite-row"><button class="favorite-main" data-open-route="${escapeHtml(route.id)}"><span class="favorite-symbol route-star">★</span><span><b>${escapeHtml(route.name)}</b><small>${escapeHtml(routeSegmentSummary(route))}</small></span></button><button class="favorite-delete" data-delete-route="${escapeHtml(route.id)}" title="Delete">×</button></div>`).join("") : `<div class="empty-state">No favorite routes yet.</div>`;
+  placesNode.querySelectorAll("[data-open-place]").forEach(button => button.addEventListener("click", () => { const place = frequentPlaces.find(item => item.id === button.dataset.openPlace); if (!place) return; closeFavoritesSheet(false); layerState.places = true; applyLayerState(); map.panTo({lat:place.lat,lng:place.lng}); if ((map.getZoom()||0)<16) map.setZoom(16); showPlaceInfo(place); }));
+  placesNode.querySelectorAll("[data-delete-place]").forEach(button => button.addEventListener("click", () => deleteFrequentPlace(button.dataset.deletePlace)));
+  routesNode.querySelectorAll("[data-open-route]").forEach(button => button.addEventListener("click", () => { closeFavoritesSheet(false); activateFavoriteRoute(button.dataset.openRoute); }));
+  routesNode.querySelectorAll("[data-delete-route]").forEach(button => button.addEventListener("click", () => deleteFavoriteRoute(button.dataset.deleteRoute)));
+}
+
+/* Wrap the v1.3D render state instead of replacing the transport engine. */
+const applyLayerStateV13D = applyLayerState;
+applyLayerState = function() {
+  applyLayerStateV13D();
+  applyFavoriteCategoryVisibility();
+  syncV13EPanelUI();
+  saveV13ELayerPrefs();
+};
+
+const createPlaceMarkersV13D = createPlaceMarkers;
+createPlaceMarkers = function() {
+  createPlaceMarkersV13D();
+  if (map) applyFavoriteCategoryVisibility();
+};
+
+const initMapV13D = initMap;
+initMap = function() {
+  restoreV13ELayerPrefs();
+  initMapV13D();
+  if (savedLayerPrefs.traffic) trafficLayer.setMap(map);
+  syncV13EPanelUI();
+  applyLayerState();
+  map.addListener("click", () => toggleLayersPanel(false));
+};
+
+migrateV13EFavorites();
+restoreV13ELayerPrefs();
+
+/* v1.3E panel controls */
+el("layers-menu-btn")?.addEventListener("click", () => toggleLayersPanel());
+el("layers-panel-close")?.addEventListener("click", () => toggleLayersPanel(false));
+el("favorites-manage-btn")?.addEventListener("click", () => { toggleLayersPanel(false); openFavoritesSheet(); });
+
+document.querySelectorAll("[data-layer]").forEach(button => button.addEventListener("click", () => toggleLayer(button.dataset.layer)));
+document.querySelectorAll("[data-favorite-category]").forEach(button => button.addEventListener("click", () => toggleFavoriteCategory(button.dataset.favoriteCategory)));
+document.querySelectorAll("[data-layer-coming]").forEach(button => button.addEventListener("click", () => showToast(`${button.dataset.layerComing[0].toUpperCase()}${button.dataset.layerComing.slice(1)} arrives in the next map-data build.`)));
+el("panel-traffic-toggle")?.addEventListener("click", toggleV13ETraffic);
+
+el("search-input")?.addEventListener("focus", () => { if (!el("search-input").value.trim()) renderSearchResults(); });
+el("search-input")?.addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    const query = el("search-input").value.trim();
+    if (query) searchAllLondon(query);
+  }
+});
 
 
 /* ---------- Controls ---------- */
