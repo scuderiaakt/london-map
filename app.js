@@ -1,4 +1,4 @@
-/* Our Cities Map v1.4A
+/* Our Cities Map v1.4B
    Google Maps basemap + geographic London Underground overlay.
    v1.3D adds Rail + Tram, transport focus, richer information panels and route-building hooks,
    while preserving persistent favorites, geographic Metro and the mobile-first interface.
@@ -5350,6 +5350,884 @@ migrateV14FavoriteCities();
 
 document.querySelectorAll("[data-city]").forEach(button => button.addEventListener("click", () => switchCity(button.dataset.city)));
 updateV14CityUI();
+
+
+
+/* ---------- v1.4B: Rome transport + city information ---------- */
+const ROME_CACHE_PREFIX = "ourCities.rome.v14b.";
+const ROME_ARCGIS = {
+  metroRailLines: "https://viaggiacon.atac.roma.it/server/rest/services/Viaggiacon/MappaDiBaseWgs84_2024_new/MapServer/26",
+  metroStations: "https://viaggiacon.atac.roma.it/server/rest/services/Viaggiacon/MappaDiBaseWgs84_2024_new/MapServer/24",
+  railStations: "https://viaggiacon.atac.roma.it/server/rest/services/Viaggiacon/MappaDiBaseWgs84_2024_new/MapServer/13",
+  surfaceRoutes: "https://viaggiacon.atac.roma.it/server/rest/services/Viaggiacon/IdentfyReteWgs84/MapServer/0",
+  surfaceStops: "https://viaggiacon.atac.roma.it/server/rest/services/Viaggiacon/IdentifyFermateSuperficie1/MapServer/0",
+  municipi: "https://viaggiacon.atac.roma.it/server/rest/services/Viaggiacon/IdentifyMunicipiWgs84/MapServer/0"
+};
+
+const ROME_METRO_LINES = [
+  { id: "rome-metro-a", apiNames: ["METROA", "METRO A"], code: "A", name: "Metro A", displayName: "Metro A", color: "#F36C21", family: "metro", kind: "metro", about: "Rome's orange east–west metro line links Battistini with Anagnina through the historic centre, including stops near the Vatican, Piazza di Spagna and Termini.", background: "Line A opened in 1980 and became Rome's second metro line. It remains one of the city's main cross-centre rapid-transit corridors." },
+  { id: "rome-metro-b", apiNames: ["METROB", "METRO B"], code: "B", name: "Metro B", displayName: "Metro B", color: "#0071BB", family: "metro", kind: "metro", about: "Rome's blue north-east/south metro corridor connects Rebibbia with Laurentina through Termini, Colosseo and EUR.", background: "The first section opened in 1955, making Line B the oldest part of Rome's metro network. Its northern branch later gained the B1 designation." },
+  { id: "rome-metro-b1", apiNames: ["METROB1", "METRO B1"], code: "B1", name: "Metro B1", displayName: "Metro B1", color: "#0071BB", family: "metro", kind: "metro", about: "B1 is the northern branch of the blue Line B family, running from the shared southern trunk toward Jonio.", background: "The B1 branch opened in stages from 2012, extending rapid transit into neighbourhoods north of the original Line B corridor." },
+  { id: "rome-metro-c", apiNames: ["METROC", "METRO C"], code: "C", name: "Metro C", displayName: "Metro C", color: "#008751", family: "metro", kind: "metro", about: "Rome's green automated metro line runs from the eastern suburbs at Pantano into the historic centre at Colosseo, with interchange to Lines A and B.", background: "Line C is Rome's newest metro line and uses fully automated trains. Its extension into the centre created new interchanges at San Giovanni and Colosseo." }
+];
+const ROME_METRO_BY_ID = new Map(ROME_METRO_LINES.map(line => [line.id, line]));
+
+const ROME_RAIL_PROFILES = [
+  { match: ["ROMA - LIDO", "ROMA-LIDO", "ROMA LIDO", "METROMARE"], id: "rome-rail-metromare", code: "R1", name: "Metromare", displayName: "R1 · Metromare", color: "#2C9AB7", family: "rail", kind: "urban-rail", about: "Metromare links the city at Porta San Paolo/Piramide with EUR and the coastal districts around Ostia.", background: "The railway has served Rome's route to the sea for more than a century. Today it functions as a high-capacity urban and suburban rail corridor." },
+  { match: ["ROMA - VITERBO", "ROMA-VITERBO", "ROMA VITERBO", "ROMA NORD", "FLAMINIO"], id: "rome-rail-viterbo", code: "R2", name: "Roma–Viterbo", displayName: "R2 · Roma–Viterbo", color: "#9E5BB5", family: "rail", kind: "urban-rail", about: "The Roma–Viterbo railway leaves the city from Flaminio and serves northern Rome before continuing toward the metropolitan area.", background: "Its urban section is one of Rome's long-established suburban rail corridors and provides an important interchange with Metro A at Flaminio." },
+  { match: ["FL1"], id: "rome-rail-fl1", code: "FL1", name: "FL1", displayName: "FL1 · Regional Rail", color: "#3F8EDB", family: "rail", kind: "regional" },
+  { match: ["FL2"], id: "rome-rail-fl2", code: "FL2", name: "FL2", displayName: "FL2 · Regional Rail", color: "#5D9E55", family: "rail", kind: "regional" },
+  { match: ["FL3"], id: "rome-rail-fl3", code: "FL3", name: "FL3", displayName: "FL3 · Regional Rail", color: "#C88437", family: "rail", kind: "regional" },
+  { match: ["FL4"], id: "rome-rail-fl4", code: "FL4", name: "FL4", displayName: "FL4 · Regional Rail", color: "#B75562", family: "rail", kind: "regional" },
+  { match: ["FL5"], id: "rome-rail-fl5", code: "FL5", name: "FL5", displayName: "FL5 · Regional Rail", color: "#8B6CC2", family: "rail", kind: "regional" },
+  { match: ["FL6"], id: "rome-rail-fl6", code: "FL6", name: "FL6", displayName: "FL6 · Regional Rail", color: "#4FA3A5", family: "rail", kind: "regional" },
+  { match: ["FL7"], id: "rome-rail-fl7", code: "FL7", name: "FL7", displayName: "FL7 · Regional Rail", color: "#AE7F4B", family: "rail", kind: "regional" },
+  { match: ["FL8"], id: "rome-rail-fl8", code: "FL8", name: "FL8", displayName: "FL8 · Regional Rail", color: "#C05B9F", family: "rail", kind: "regional" }
+];
+
+const ROME_TRAM_NUMBERS = ["2", "3", "5", "8", "14", "19"];
+const ROME_TRAM_COLORS = { "2": "#D89A37", "3": "#C87A44", "5": "#E3AA35", "8": "#D47E54", "14": "#C99E3C", "19": "#B98745" };
+const ROME_TRAM_LINES = ROME_TRAM_NUMBERS.map(number => ({
+  id: `rome-tram-${number}`,
+  apiNames: [number],
+  code: number,
+  name: `Tram ${number}`,
+  displayName: `Tram ${number}`,
+  color: ROME_TRAM_COLORS[number],
+  family: "tram",
+  kind: "tram",
+  about: `Tram ${number} is part of Rome's street-running tram network. The map shows the mapped tram corridor; temporary construction or replacement-bus arrangements can change day-to-day operation.`,
+  background: "Rome's modern tram network descends from a much larger system that shaped travel across the city from the late nineteenth century onward."
+}));
+const ROME_TRAM_BY_ID = new Map(ROME_TRAM_LINES.map(line => [line.id, line]));
+
+let romeLineById = new Map();
+let romeMetroGeometryRegistry = new Map();
+let romeSurfaceGeometryRegistry = new Map();
+let romeMetroStationRegistry = new Map();
+let romeSurfaceStationRegistry = new Map();
+let romeMetroRenderings = [];
+let romeSurfaceRenderings = [];
+let romeMetroStationOverlays = [];
+let romeSurfaceStationOverlays = [];
+let romeLineLabelOverlays = [];
+let romeCoreLoaded = false;
+let romeCorePromise = null;
+let romeTramLoaded = false;
+let romeTramPromise = null;
+let romeTramStopsLoaded = false;
+let romeTramStopsPromise = null;
+let romeLabelRefreshTimer = null;
+
+let romeMunicipiLayer = null;
+let romeMunicipiReady = false;
+let romeMunicipiCentroids = [];
+let romeMunicipiLabels = [];
+let romeMunicipiWeather = new Map();
+let romeWeatherPromise = null;
+let romeWindOverlays = [];
+let romeWindPromise = null;
+
+function romeNormalize(value) {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+}
+
+function romeSlug(value) {
+  return romeNormalize(value).toLowerCase().replace(/\s+/g, "-").replace(/^-|-$/g, "") || `item-${Math.random().toString(36).slice(2,8)}`;
+}
+
+function formatRomeLineName(line) {
+  if (!line) return "Transport line";
+  return line.displayName || (line.family === "metro" ? `Metro ${line.code}` : line.family === "tram" ? `Tram ${line.code}` : `${line.code} · ${line.name}`);
+}
+
+function romeLineFamilyLabel(line) {
+  if (line.family === "metro") return "METRO LINE";
+  if (line.family === "tram") return "TRAM LINE";
+  if (line.kind === "regional") return "REGIONAL RAIL";
+  return "URBAN RAIL";
+}
+
+function classifyRomeMetro(raw) {
+  const n = romeNormalize(raw).replace(/\s/g, "");
+  if (n.includes("METROB1")) return ROME_METRO_BY_ID.get("rome-metro-b1");
+  if (n.includes("METROA")) return ROME_METRO_BY_ID.get("rome-metro-a");
+  if (n.includes("METROB")) return ROME_METRO_BY_ID.get("rome-metro-b");
+  if (n.includes("METROC")) return ROME_METRO_BY_ID.get("rome-metro-c");
+  return null;
+}
+
+function classifyRomeRail(raw) {
+  const n = romeNormalize(raw);
+  if (!n || n.includes("CENTOCELLE") || n === "FS") return null;
+  return ROME_RAIL_PROFILES.find(profile => profile.match.some(token => n.includes(romeNormalize(token)))) || null;
+}
+
+function arcGisFeaturePaths(feature) {
+  const geometry = feature?.geometry;
+  if (!geometry) return [];
+  const convert = coords => coords.map(pair => ({ lat: Number(pair[1]), lng: Number(pair[0]) })).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  if (geometry.type === "LineString") return [convert(geometry.coordinates)];
+  if (geometry.type === "MultiLineString") return geometry.coordinates.map(convert).filter(path => path.length > 1);
+  return [];
+}
+
+function arcGisFeaturePoint(feature) {
+  const geometry = feature?.geometry;
+  if (geometry?.type !== "Point" || !Array.isArray(geometry.coordinates)) return null;
+  const [lng, lat] = geometry.coordinates.map(Number);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+}
+
+async function fetchRomeArcGisGeoJson(layerUrl, options = {}) {
+  const params = new URLSearchParams({
+    where: options.where || "1=1",
+    outFields: options.outFields || "*",
+    returnGeometry: options.returnGeometry === false ? "false" : "true",
+    outSR: "4326",
+    f: "geojson"
+  });
+  if (options.geometry) {
+    params.set("geometry", options.geometry);
+    params.set("geometryType", options.geometryType || "esriGeometryEnvelope");
+    params.set("inSR", "4326");
+    params.set("spatialRel", "esriSpatialRelIntersects");
+  }
+  if (Number.isFinite(options.resultOffset)) params.set("resultOffset", String(options.resultOffset));
+  if (Number.isFinite(options.resultRecordCount)) params.set("resultRecordCount", String(options.resultRecordCount));
+  const url = `${layerUrl}/query?${params.toString()}`;
+  const response = await fetch(url, { headers: { Accept: "application/geo+json,application/json" } });
+  if (!response.ok) throw new Error(`Rome open-data request returned ${response.status}`);
+  return response.json();
+}
+
+async function fetchRomePagedStops(envelope) {
+  const all = [];
+  for (let offset = 0; offset < 7000; offset += 1000) {
+    const data = await fetchRomeArcGisGeoJson(ROME_ARCGIS.surfaceStops, {
+      where: "SOPPRESSA <> 'T'",
+      geometry: envelope,
+      resultOffset: offset,
+      resultRecordCount: 1000
+    });
+    const features = data?.features || [];
+    all.push(...features);
+    if (features.length < 1000) break;
+  }
+  return all;
+}
+
+function romeStationCanonicalName(raw) {
+  let name = String(raw || "Station").replace(/\s+/g, " ").trim();
+  name = name.replace(/^STAZIONE\s+/i, "").replace(/\s+METRO$/i, "");
+  const n = romeNormalize(name);
+  if (n.includes("TERMINI")) return "Termini";
+  if (n.includes("COLOSSEO")) return "Colosseo / Fori Imperiali";
+  if (n.includes("SAN GIOVANNI") || n === "S GIOVANNI") return "San Giovanni";
+  if (n.includes("PIRAMIDE")) return "Piramide";
+  if (n.includes("FLAMINIO")) return "Flaminio";
+  if (n.includes("TIBURTINA")) return "Tiburtina";
+  return name.toLowerCase().replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function romeStationKey(name, point, prefix = "metro") {
+  const canonical = romeStationCanonicalName(name);
+  const base = romeSlug(canonical);
+  return `rome:${prefix}:${base}`;
+}
+
+function addUniqueRomeService(station, line, property = "services") {
+  if (!line) return;
+  station[property] = station[property] || [];
+  if (!station[property].some(item => item.id === line.id)) station[property].push(line);
+}
+
+function ingestRomeCoreData(linesGeo, metroStationsGeo, railStationsGeo) {
+  romeLineById = new Map();
+  romeMetroGeometryRegistry = new Map();
+  romeSurfaceGeometryRegistry = new Map();
+  romeMetroStationRegistry = new Map();
+  romeSurfaceStationRegistry = new Map();
+  ROME_METRO_LINES.forEach(line => romeLineById.set(line.id, { ...line }));
+
+  for (const feature of linesGeo?.features || []) {
+    const props = feature.properties || {};
+    const raw = `${props.NOMELINEA || ""} ${props.DESCR || ""} ${props.PERCORSO || ""}`;
+    const paths = arcGisFeaturePaths(feature).filter(path => path.length > 1);
+    if (!paths.length) continue;
+    const metro = classifyRomeMetro(raw);
+    if (metro) {
+      const existing = romeMetroGeometryRegistry.get(metro.id) || [];
+      existing.push(...paths);
+      romeMetroGeometryRegistry.set(metro.id, existing);
+      continue;
+    }
+    const railProfile = classifyRomeRail(raw);
+    if (!railProfile) continue;
+    const line = romeLineById.get(railProfile.id) || { ...railProfile };
+    romeLineById.set(line.id, line);
+    const existing = romeSurfaceGeometryRegistry.get(line.id) || [];
+    existing.push(...paths);
+    romeSurfaceGeometryRegistry.set(line.id, existing);
+  }
+
+  for (const feature of metroStationsGeo?.features || []) {
+    const point = arcGisFeaturePoint(feature);
+    if (!point) continue;
+    const props = feature.properties || {};
+    const line = classifyRomeMetro(`${props.NOMELINEA || ""} ${props.PERCORSI || ""}`);
+    if (!line) continue;
+    const name = romeStationCanonicalName(props.NOME || props.IMPIANTO || "Metro station");
+    const id = romeStationKey(name, point, "metro");
+    const station = romeMetroStationRegistry.get(id) || { id, name, lat: point.lat, lon: point.lng, lines: [], surfaceServices: [], city: "rome" };
+    station.lat = (station.lat + point.lat) / 2;
+    station.lon = (station.lon + point.lng) / 2;
+    addUniqueRomeService(station, line, "lines");
+    romeMetroStationRegistry.set(id, station);
+  }
+
+  for (const feature of railStationsGeo?.features || []) {
+    const point = arcGisFeaturePoint(feature);
+    if (!point) continue;
+    const props = feature.properties || {};
+    const line = classifyRomeRail(`${props.NOMELINEA || ""} ${props.PERCORSI || ""}`);
+    if (!line) continue;
+    const registeredLine = romeLineById.get(line.id) || { ...line };
+    romeLineById.set(registeredLine.id, registeredLine);
+    const name = romeStationCanonicalName(props.NOME || props.IMPIANTO || props.NOMESTAZ || "Rail station");
+    const id = romeStationKey(name, point, "surface");
+    const station = romeSurfaceStationRegistry.get(id) || { id, name, lat: point.lat, lon: point.lng, services: [], city: "rome" };
+    station.lat = (station.lat + point.lat) / 2;
+    station.lon = (station.lon + point.lng) / 2;
+    addUniqueRomeService(station, registeredLine, "services");
+    romeSurfaceStationRegistry.set(id, station);
+  }
+  linkRomeStationComplexes();
+}
+
+function linkRomeStationComplexes() {
+  for (const surface of romeSurfaceStationRegistry.values()) {
+    let best = null, bestDistance = Infinity;
+    for (const metro of romeMetroStationRegistry.values()) {
+      const a = romeNormalize(surface.name), b = romeNormalize(metro.name);
+      const compatible = a === b || a.includes(b) || b.includes(a) || (a.includes("TERMINI") && b.includes("TERMINI")) || (a.includes("PIRAMIDE") && b.includes("PIRAMIDE"));
+      if (!compatible) continue;
+      const distance = haversineKm({ lat: surface.lat, lng: surface.lon }, { lat: metro.lat, lng: metro.lon });
+      if (distance < bestDistance && distance <= 0.38) { best = metro; bestDistance = distance; }
+    }
+    if (!best) continue;
+    surface.metroStationId = best.id;
+    for (const service of surface.services) addUniqueRomeService(best, service, "surfaceServices");
+  }
+}
+
+async function ensureRomeCore(force = false) {
+  if (romeCoreLoaded && !force) return;
+  if (romeCorePromise && !force) return romeCorePromise;
+  romeCorePromise = (async () => {
+    setNetworkStatus("Loading Rome Metro + Rail…");
+    const cacheKey = `${ROME_CACHE_PREFIX}core`;
+    let bundle = !force ? getCache(cacheKey) : null;
+    if (!bundle) {
+      const [linesGeo, metroStationsGeo, railStationsGeo] = await Promise.all([
+        fetchRomeArcGisGeoJson(ROME_ARCGIS.metroRailLines),
+        fetchRomeArcGisGeoJson(ROME_ARCGIS.metroStations),
+        fetchRomeArcGisGeoJson(ROME_ARCGIS.railStations)
+      ]);
+      bundle = { linesGeo, metroStationsGeo, railStationsGeo };
+      setCache(cacheKey, bundle);
+    }
+    ingestRomeCoreData(bundle.linesGeo, bundle.metroStationsGeo, bundle.railStationsGeo);
+    romeCoreLoaded = true;
+    renderRomeTransport();
+    rebuildRomeLineLabels();
+    setNetworkStatus("Rome transport ready");
+    refreshSearchIfOpen();
+  })().catch(err => {
+    console.error("Rome core load failed", err);
+    setNetworkStatus("Rome transport data unavailable", true);
+    showToast("Rome Metro/Rail open data could not load. Try Refresh transport data.", 4200);
+    throw err;
+  }).finally(() => { romeCorePromise = null; });
+  return romeCorePromise;
+}
+
+async function ensureRomeTrams(force = false) {
+  if (romeTramLoaded && !force) return;
+  if (romeTramPromise && !force) return romeTramPromise;
+  romeTramPromise = (async () => {
+    const cacheKey = `${ROME_CACHE_PREFIX}trams`;
+    let data = !force ? getCache(cacheKey) : null;
+    if (!data) {
+      const where = `NOMELINEA IN (${ROME_TRAM_NUMBERS.map(number => `'${number}'`).join(",")})`;
+      data = await fetchRomeArcGisGeoJson(ROME_ARCGIS.surfaceRoutes, { where });
+      setCache(cacheKey, data);
+    }
+    ROME_TRAM_LINES.forEach(line => romeLineById.set(line.id, { ...line }));
+    for (const feature of data?.features || []) {
+      const props = feature.properties || {};
+      const number = String(props.NOMELINEA || "").trim();
+      const line = ROME_TRAM_LINES.find(item => item.code === number);
+      if (!line) continue;
+      const paths = arcGisFeaturePaths(feature).filter(path => path.length > 1);
+      const existing = romeSurfaceGeometryRegistry.get(line.id) || [];
+      existing.push(...paths);
+      romeSurfaceGeometryRegistry.set(line.id, existing);
+    }
+    romeTramLoaded = true;
+    renderRomeTransport();
+    rebuildRomeLineLabels();
+    if (layerState.tram) ensureRomeTramStops().catch(() => {});
+  })().catch(err => {
+    console.warn("Rome tram load failed", err);
+    showToast("Rome tram geometry is temporarily unavailable.", 3400);
+  }).finally(() => { romeTramPromise = null; });
+  return romeTramPromise;
+}
+
+function pathBounds(paths) {
+  let south = 90, north = -90, west = 180, east = -180;
+  for (const path of paths || []) for (const point of path || []) {
+    south = Math.min(south, point.lat); north = Math.max(north, point.lat); west = Math.min(west, point.lng); east = Math.max(east, point.lng);
+  }
+  return Number.isFinite(south) ? { south, north, west, east } : null;
+}
+
+function pointSegmentDistanceKm(point, a, b) {
+  const lat0 = point.lat * Math.PI / 180;
+  const kx = 111.32 * Math.cos(lat0), ky = 110.57;
+  const px = point.lng * kx, py = point.lat * ky;
+  const ax = a.lng * kx, ay = a.lat * ky, bx = b.lng * kx, by = b.lat * ky;
+  const dx = bx - ax, dy = by - ay;
+  const denom = dx * dx + dy * dy;
+  const t = denom ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / denom)) : 0;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+function distanceToPathsKm(point, paths, maxKm = .06) {
+  let best = Infinity;
+  for (const rawPath of paths || []) {
+    const path = v13fThinPath(rawPath, 240);
+    for (let i = 1; i < path.length; i++) {
+      const d = pointSegmentDistanceKm(point, path[i-1], path[i]);
+      if (d < best) best = d;
+      if (best <= maxKm * .55) return best;
+    }
+  }
+  return best;
+}
+
+async function ensureRomeTramStops(force = false) {
+  if (romeTramStopsLoaded && !force) return;
+  if (romeTramStopsPromise && !force) return romeTramStopsPromise;
+  romeTramStopsPromise = (async () => {
+    if (!romeTramLoaded) await ensureRomeTrams();
+    const allPaths = ROME_TRAM_LINES.flatMap(line => romeSurfaceGeometryRegistry.get(line.id) || []);
+    const bounds = pathBounds(allPaths);
+    if (!bounds) return;
+    const pad = .015;
+    const envelope = `${bounds.west-pad},${bounds.south-pad},${bounds.east+pad},${bounds.north+pad}`;
+    const features = await fetchRomePagedStops(envelope);
+    for (const feature of features) {
+      const point = arcGisFeaturePoint(feature);
+      if (!point) continue;
+      const props = feature.properties || {};
+      const matched = [];
+      for (const line of ROME_TRAM_LINES) {
+        const paths = romeSurfaceGeometryRegistry.get(line.id) || [];
+        const b = pathBounds(paths);
+        if (!b || point.lat < b.south-.002 || point.lat > b.north+.002 || point.lng < b.west-.003 || point.lng > b.east+.003) continue;
+        if (distanceToPathsKm(point, paths, .055) <= .055) matched.push(romeLineById.get(line.id) || line);
+      }
+      if (!matched.length) continue;
+      const name = romeStationCanonicalName(props.NOMEFERM || props.LOCALITA || props.UBICAZIONE || `Stop ${props.IMPIANTO || ""}`);
+      const id = `rome:tram:${props.IMPIANTO || romeSlug(`${name}-${point.lat.toFixed(5)}-${point.lng.toFixed(5)}`)}`;
+      const station = romeSurfaceStationRegistry.get(id) || { id, name, lat: point.lat, lon: point.lng, services: [], city: "rome", tramApproximation: true };
+      matched.forEach(line => addUniqueRomeService(station, line, "services"));
+      romeSurfaceStationRegistry.set(id, station);
+    }
+    romeTramStopsLoaded = true;
+    buildRomeStationOverlays();
+    applyLayerState();
+    refreshSearchIfOpen();
+  })().catch(err => {
+    console.warn("Rome tram stops unavailable", err);
+  }).finally(() => { romeTramStopsPromise = null; });
+  return romeTramStopsPromise;
+}
+
+let RomeStationOverlay;
+let RomeSurfaceStationOverlay;
+let RomeLineLabelOverlay;
+function ensureRomeOverlayClasses() {
+  if (RomeStationOverlay) return;
+  RomeStationOverlay = class extends HtmlOverlay {
+    constructor(station) { super({ lat: station.lat, lng: station.lon }, "station-node rome-station-node"); this.station = station; }
+    onAdd() {
+      super.onAdd();
+      const lines = [...(this.station.lines || []), ...(this.station.surfaceServices || [])];
+      this.div.style.background = stationNodeBackground(lines.length ? lines : [{ color: "#fff" }]);
+      this.div.classList.toggle("interchange", lines.length > 1);
+      this.div.title = `${this.station.name} — ${lines.map(formatRomeLineName).join(" · ")}`;
+      this.div.innerHTML = `<div class="station-hover-card"><div class="station-hover-title">${escapeHtml(this.station.name)}</div>${lines.map(line => `<div class="station-hover-line"><i class="station-hover-swatch" style="background:${line.color}"></i><span>${escapeHtml(formatRomeLineName(line))}</span></div>`).join("")}</div>`;
+      this.div.addEventListener("click", event => { event.stopPropagation(); selectRomeStation(this.station, "metro", { showInfo: true }); });
+    }
+    draw() { if (!this.div) return; const p = this.getProjection().fromLatLngToDivPixel(new google.maps.LatLng(this.position)); if (!p) return; this.div.style.left=`${p.x}px`; this.div.style.top=`${p.y}px`; this.div.style.transform="translate(-50%,-50%)"; this.div.style.display=this.visible?"":"none"; }
+  };
+  RomeSurfaceStationOverlay = class extends HtmlOverlay {
+    constructor(station) { const family = station.services?.some(line => line.family === "tram") && !station.services?.some(line => line.family === "rail") ? "tram" : "rail"; super({ lat: station.lat, lng: station.lon }, `surface-station-node ${family}-station-node rome-surface-station-node`); this.station=station; this.family=family; }
+    onAdd() {
+      super.onAdd();
+      const services = this.station.services || [];
+      this.div.style.background = surfaceStationNodeBackground(services);
+      this.div.title = `${this.station.name} — ${services.map(formatRomeLineName).join(" · ")}`;
+      this.div.innerHTML = `<div class="station-hover-card"><div class="station-hover-title">${escapeHtml(this.station.name)}</div>${services.map(line => `<div class="station-hover-line"><i class="station-hover-swatch" style="background:${line.color}"></i><span>${escapeHtml(formatRomeLineName(line))}</span></div>`).join("")}</div>`;
+      this.div.addEventListener("click", event => { event.stopPropagation(); selectRomeStation(this.station, this.family, { showInfo: true }); });
+    }
+  };
+  RomeLineLabelOverlay = class extends LineLabelOverlay {
+    onAdd() { super.onAdd(); this.div.classList.add("rome-line-label"); if (this.line.family !== "metro") this.div.classList.add("surface-line-label", this.line.family === "tram" ? "tram-line-label" : "rail-line-label"); }
+  };
+}
+
+function clearRomeTransportRenderings() {
+  romeMetroRenderings.forEach(item => item.polyline.setMap(null));
+  romeSurfaceRenderings.forEach(item => item.polyline.setMap(null));
+  romeMetroStationOverlays.forEach(item => item.setMap(null));
+  romeSurfaceStationOverlays.forEach(item => item.setMap(null));
+  romeLineLabelOverlays.forEach(item => item.setMap(null));
+  romeMetroRenderings=[]; romeSurfaceRenderings=[]; romeMetroStationOverlays=[]; romeSurfaceStationOverlays=[]; romeLineLabelOverlays=[];
+}
+
+function renderRomeTransport() {
+  if (!map) return;
+  ensureRomeOverlayClasses();
+  romeMetroRenderings.forEach(item => item.polyline.setMap(null)); romeMetroRenderings=[];
+  romeSurfaceRenderings.forEach(item => item.polyline.setMap(null)); romeSurfaceRenderings=[];
+  for (const line of ROME_METRO_LINES) {
+    const registered = romeLineById.get(line.id) || line;
+    for (const raw of romeMetroGeometryRegistry.get(line.id) || []) {
+      const path = v13fThinPath(raw, 400);
+      const main = new google.maps.Polyline({ map, path, geodesic:false, strokeColor:registered.color, strokeOpacity:0, strokeWeight:5.4, zIndex:20, clickable:false, visible:false });
+      const hit = new google.maps.Polyline({ map, path, strokeColor:registered.color, strokeOpacity:.001, strokeWeight:20, zIndex:65, clickable:true, visible:false });
+      hit.addListener("click", () => selectRomeLine(registered, { showInfo:true }));
+      romeMetroRenderings.push({ polyline:main, line:registered, role:"main" }, { polyline:hit, line:registered, role:"hit" });
+    }
+  }
+  for (const line of [...romeLineById.values()].filter(line => line.family === "rail" || line.family === "tram")) {
+    for (const raw of romeSurfaceGeometryRegistry.get(line.id) || []) {
+      const path = v13fThinPath(raw, line.kind === "regional" ? 190 : 320);
+      if (line.family === "tram") {
+        const band = new google.maps.Polyline({ map, path, strokeColor:line.color, strokeOpacity:0, strokeWeight:9, zIndex:24, clickable:false, visible:false });
+        const main = new google.maps.Polyline({ map, path, strokeColor:line.color, strokeOpacity:0, strokeWeight:2.8, zIndex:25, clickable:false, visible:false });
+        romeSurfaceRenderings.push({polyline:band,line,role:"tram-band"},{polyline:main,line,role:"main"});
+      } else {
+        const outer = new google.maps.Polyline({ map, path, strokeColor:line.color, strokeOpacity:0, strokeWeight:line.kind === "regional" ? 5 : 7, zIndex:24, clickable:false, visible:false });
+        const inner = new google.maps.Polyline({ map, path, strokeColor:"#0B1017", strokeOpacity:0, strokeWeight:line.kind === "regional" ? 2 : 2.8, zIndex:25, clickable:false, visible:false });
+        romeSurfaceRenderings.push({polyline:outer,line,role:"outer"},{polyline:inner,line,role:"inner"});
+      }
+      const hit = new google.maps.Polyline({ map, path, strokeColor:line.color, strokeOpacity:.001, strokeWeight:20, zIndex:66, clickable:true, visible:false });
+      hit.addListener("click", () => selectRomeLine(line,{showInfo:true}));
+      romeSurfaceRenderings.push({polyline:hit,line,role:"hit"});
+    }
+  }
+  buildRomeStationOverlays();
+  applyLayerState();
+}
+
+function buildRomeStationOverlays() {
+  if (!map) return;
+  ensureRomeOverlayClasses();
+  romeMetroStationOverlays.forEach(item => item.setMap(null)); romeMetroStationOverlays=[];
+  romeSurfaceStationOverlays.forEach(item => item.setMap(null)); romeSurfaceStationOverlays=[];
+  for (const station of romeMetroStationRegistry.values()) {
+    if (!station.lines?.length) continue;
+    const overlay = new RomeStationOverlay(station); overlay.setMap(map); overlay.setVisible(false); romeMetroStationOverlays.push(overlay);
+  }
+  for (const station of romeSurfaceStationRegistry.values()) {
+    if (!station.services?.length) continue;
+    const overlay = new RomeSurfaceStationOverlay(station); overlay.setMap(map); overlay.setVisible(false); romeSurfaceStationOverlays.push(overlay);
+  }
+}
+
+function rebuildRomeLineLabels() {
+  romeLineLabelOverlays.forEach(item => item.setMap(null)); romeLineLabelOverlays=[];
+  if (!map) return;
+  ensureRomeOverlayClasses();
+  const zoom = map.getZoom() || 12;
+  const spacing = zoom >= 14 ? 1.0 : zoom >= 12 ? 1.7 : 2.8;
+  for (const line of romeLineById.values()) {
+    const paths = line.family === "metro" ? romeMetroGeometryRegistry.get(line.id) || [] : romeSurfaceGeometryRegistry.get(line.id) || [];
+    let count=0;
+    for (const path of paths) {
+      for (const sample of samplePathForLabels(path, spacing)) {
+        const overlay = new RomeLineLabelOverlay(sample.position, sample.nextPosition, line);
+        overlay.setMap(map); overlay.setVisible(false); romeLineLabelOverlays.push(overlay);
+        count++; if (count >= (line.family === "metro" ? 22 : 12)) break;
+      }
+      if (count >= (line.family === "metro" ? 22 : 12)) break;
+    }
+  }
+}
+
+function romeRouteServiceIds(route) {
+  return new Set((route?.segments || []).filter(segment => ["metro","rail","tram"].includes(segment.mode)).map(segment => segment.service).filter(id => romeLineById.has(id)));
+}
+
+function romeSelectionMatches(selection, line) {
+  return selection?.city === "rome" && selection.type === "line" && selection.id === line.id;
+}
+
+function applyRomeLayerState() {
+  const inRome = currentCityId === "rome";
+  const route = getActiveFavoriteRoute();
+  const romeRoute = route && getRouteCityId(route) === "rome" ? route : null;
+  const routeServices = romeRouteServiceIds(romeRoute);
+  const selection = getTransportSelection();
+  const romeSelection = selection?.city === "rome" ? selection : null;
+  const hasSelection = !!romeSelection;
+  const hasRoute = !!romeRoute;
+  const metroFocus = inRome && layerState.metro && !layerState.rail && !layerState.tram && !layerState.places && !cityInfoState.districts && !cityInfoState.weather && !cityInfoState.wind && !hasSelection && !hasRoute;
+  const secondaryMetro = inRome && layerState.metro && !metroFocus && !hasSelection && !hasRoute;
+
+  for (const item of romeMetroRenderings) {
+    let visible = false, strong = false;
+    if (inRome) {
+      if (hasSelection) { visible = romeSelection.type === "line" ? romeSelection.id === item.line.id : romeSelection.family === "metro" && romeSelection.station?.lines?.some(line => line.id === item.line.id); strong=visible; }
+      else if (hasRoute) { visible = routeServices.has(item.line.id); strong=visible; }
+      else { visible=layerState.metro; strong=metroFocus; }
+    }
+    item.polyline.setVisible(visible);
+    if (!visible) continue;
+    if (item.role === "hit") item.polyline.setOptions({strokeOpacity:.001,strokeWeight:20,zIndex:72});
+    else item.polyline.setOptions({strokeOpacity:strong?.98:secondaryMetro?.30:.84,strokeWeight:strong?6.6:secondaryMetro?3.1:5.2,zIndex:strong?46:secondaryMetro?16:24});
+  }
+
+  for (const item of romeSurfaceRenderings) {
+    let visible=false,strong=false;
+    if (inRome) {
+      if (hasSelection) { visible=romeSelection.type === "line" ? romeSelection.id === item.line.id : romeSelection.family === item.line.family && romeSelection.station?.services?.some(line => line.id === item.line.id); strong=visible; }
+      else if (hasRoute) { visible=routeServices.has(item.line.id); strong=visible; }
+      else { visible=item.line.family === "rail" ? layerState.rail : layerState.tram; strong=visible; }
+    }
+    item.polyline.setVisible(visible);
+    if (!visible) continue;
+    if (item.role === "hit") item.polyline.setOptions({strokeOpacity:.001,strokeWeight:20});
+    else if (item.role === "tram-band") item.polyline.setOptions({strokeOpacity:strong?.28:.16,strokeWeight:strong?10:8});
+    else if (item.role === "outer") item.polyline.setOptions({strokeOpacity:strong?.92:.56,strokeWeight:item.line.kind === "regional" ? 5 : 7});
+    else if (item.role === "inner") item.polyline.setOptions({strokeOpacity:strong?.82:.48});
+    else item.polyline.setOptions({strokeOpacity:strong?.95:.65,strokeWeight:strong?3.2:2.6});
+  }
+
+  for (const overlay of romeMetroStationOverlays) {
+    let visible=false;
+    if (inRome) {
+      if (hasSelection) visible=romeSelection.type === "station" ? romeSelection.id === overlay.station.id : romeSelection.type === "line" && overlay.station.lines?.some(line => line.id === romeSelection.id);
+      else if (hasRoute) visible=overlay.station.lines?.some(line => routeServices.has(line.id));
+      else visible=layerState.metro;
+    }
+    overlay.setVisible(visible);
+    if (overlay.div) overlay.div.style.opacity = secondaryMetro ? ".58" : "";
+  }
+
+  for (const overlay of romeSurfaceStationOverlays) {
+    let visible=false;
+    if (inRome) {
+      if (hasSelection) visible=romeSelection.type === "station" ? romeSelection.id === overlay.station.id : romeSelection.type === "line" && overlay.station.services?.some(line => line.id === romeSelection.id);
+      else if (hasRoute) visible=overlay.station.services?.some(line => routeServices.has(line.id));
+      else {
+        visible=overlay.station.services?.some(line => line.family === "rail" ? layerState.rail : layerState.tram);
+        if (overlay.station.metroStationId && layerState.metro && romeMetroStationRegistry.has(overlay.station.metroStationId)) visible=false;
+      }
+    }
+    overlay.setVisible(visible);
+  }
+
+  for (const overlay of romeLineLabelOverlays) {
+    const line=overlay.line;
+    let visible=false;
+    if (inRome) {
+      if (hasSelection) visible=romeSelection.type === "line" && romeSelection.id === line.id;
+      else if (hasRoute) visible=routeServices.has(line.id);
+      else visible=line.family === "metro" ? layerState.metro : line.family === "rail" ? layerState.rail : layerState.tram;
+    }
+    overlay.setVisible(visible);
+    if (overlay.div) overlay.div.style.opacity = line.family === "metro" && secondaryMetro ? ".62" : "";
+  }
+}
+
+function focusRomeLine(line) {
+  const paths = line.family === "metro" ? romeMetroGeometryRegistry.get(line.id) || [] : romeSurfaceGeometryRegistry.get(line.id) || [];
+  const bounds = new google.maps.LatLngBounds(); paths.flat().forEach(point => bounds.extend(point)); if (!bounds.isEmpty()) map.fitBounds(bounds, 44);
+}
+
+function selectRomeLine(line, options = {}) {
+  activeFavoriteRouteId=null; persistentTransportFocus=null; updateRouteFocusChip(); updateItemFocusChip();
+  transientTransportSelection={type:"line",family:line.family,id:line.id,label:formatRomeLineName(line),city:"rome",line};
+  applyLayerState(); if (options.fit) focusRomeLine(line); if (options.showInfo !== false) showRomeLineInfo(line);
+}
+
+function selectRomeStation(station, family, options = {}) {
+  activeFavoriteRouteId=null; persistentTransportFocus=null; updateRouteFocusChip(); updateItemFocusChip();
+  transientTransportSelection={type:"station",family,id:station.id,label:station.name,station,city:"rome"};
+  applyLayerState(); if (options.showInfo !== false) showRomeStationInfo(station,family);
+}
+
+function romeLineProfile(line) {
+  if (line.about || line.background) return { about:line.about || `${formatRomeLineName(line)} is part of Rome's public-transport network.`, background:line.background || "This corridor forms part of Rome's layered metro, rail and tram system." };
+  if (line.kind === "regional") return { about:`${line.code} is a regional railway corridor crossing the Rome area and linking city stations with destinations beyond the centre.`, background:"Rome's FL regional lines use the national railway infrastructure and provide an important layer between urban transit and longer-distance rail." };
+  return { about:`${formatRomeLineName(line)} is part of Rome's public-transport network.`, background:"Rome combines metro, urban railway, regional railway and tram routes built across different eras." };
+}
+
+const ROME_STATION_PROFILES = {
+  "TERMINI": { descriptor:"Central rail terminal & Metro A/B interchange", about:"Roma Termini is the city's principal mainline railway station and one of its most important public-transport interchanges, connecting national rail with Metro A and B.", background:"The station's origins date to the nineteenth century; today's complex was largely rebuilt in the twentieth century and remains Rome's primary rail gateway." },
+  "COLOSSEO FORI IMPERIALI": { descriptor:"Metro B/C interchange by the Colosseum", about:"Colosseo / Fori Imperiali connects Metro B and C beside one of Rome's most important archaeological areas.", background:"The newer Line C station brought the automated metro into the historic centre and created a direct interchange with Line B." },
+  "SAN GIOVANNI": { descriptor:"Metro A/C interchange", about:"San Giovanni links Metro A with the automated Metro C east of the historic centre.", background:"Its Line C interchange was one of the network's major expansion milestones, connecting the newer line with Rome's older Line A." },
+  "PIRAMIDE": { descriptor:"Metro + Metromare transfer point", about:"Piramide is a major south-central transfer point, connecting Metro B with the Porta San Paolo terminus of Metromare and nearby Roma Ostiense railway station.", background:"The area developed into an important rail interchange around the historic Porta San Paolo and Pyramid of Cestius." },
+  "FLAMINIO": { descriptor:"Metro + northern urban rail gateway", about:"Flaminio combines Metro A with the city terminus of the Roma–Viterbo railway near Piazza del Popolo.", background:"The interchange has long served as a northern gateway between central Rome and suburban rail services." },
+  "TIBURTINA": { descriptor:"Metro + major railway hub", about:"Roma Tiburtina combines Metro B with one of Rome's largest national and regional railway stations.", background:"The modern station was substantially rebuilt in the early twenty-first century and is a major high-speed and regional rail hub." }
+};
+
+function romeStationProfile(station) {
+  const key=romeNormalize(station.name);
+  const curated=Object.entries(ROME_STATION_PROFILES).find(([k]) => key.includes(k) || k.includes(key))?.[1];
+  if (curated) return curated;
+  const services=[...(station.lines||[]),...(station.surfaceServices||station.services||[])];
+  return { descriptor:services.some(line=>line.family==="rail")?"Rome rail / transit station":services.some(line=>line.family==="tram")?"Rome tram stop":"Rome metro station", about:`${station.name} is served by ${services.map(formatRomeLineName).join(", ") || "Rome's public-transport network"}.`, background:"This stop forms part of Rome's layered transport system, which combines metro, urban and regional railways, and street-running trams." };
+}
+
+function showRomeLineInfo(line) {
+  const profile=romeLineProfile(line);
+  const registry=line.family==="metro"?romeMetroStationRegistry:romeSurfaceStationRegistry;
+  const count=[...registry.values()].filter(station => line.family==="metro" ? station.lines?.some(item=>item.id===line.id) : station.services?.some(item=>item.id===line.id)).length;
+  const content=el("detail-content");
+  content.innerHTML=`<div class="detail-label">${romeLineFamilyLabel(line)}</div><h2>${escapeHtml(formatRomeLineName(line))}</h2><div class="sub">Rome · ${line.family === "metro" ? "rapid transit" : line.family === "tram" ? "street tram" : "rail"}</div><div class="detail-section"><div class="info-row"><span>Mapped stops/stations</span><b>${count || "—"}</b></div><div class="info-row"><span>Map colour</span><b><i class="station-hover-swatch" style="background:${line.color}"></i> ${escapeHtml(line.code)}</b></div></div><div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(profile.about)}</p></div><div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>${escapeHtml(profile.background)}</p></div><div class="detail-section sub">Operational changes and replacement buses can occur during works; this layer is designed as a network/infrastructure view.</div><div class="detail-actions compact-action-row"><button class="secondary-btn compact-btn" id="rome-focus-line-btn">Focus line</button><button class="primary-btn compact-btn" id="rome-route-line-btn">Add line to Route</button></div>`;
+  openDetail(); bringPanelToFront(el("detail-card"));
+  content.querySelector("#rome-focus-line-btn")?.addEventListener("click",()=>{setPersistentTransportFocus({type:"line",family:line.family,id:line.id,label:formatRomeLineName(line),city:"rome",line});applyLayerState();});
+  content.querySelector("#rome-route-line-btn")?.addEventListener("click",()=>startRouteWithSegment({mode:line.family,service:line.id,kind:"line"}));
+}
+
+function showRomeStationInfo(station, family) {
+  const profile=romeStationProfile(station);
+  const lines=[...(station.lines||[]),...(station.surfaceServices||station.services||[])];
+  const content=el("detail-content");
+  content.innerHTML=`<div class="detail-label">${lines.length>1?"TRANSFER STATION":family==="tram"?"TRAM STOP":family==="rail"?"RAIL STATION":"METRO STATION"}</div><h2>${escapeHtml(station.name)}</h2><div class="sub">${escapeHtml(profile.descriptor)}</div><div class="chips">${lines.map(line=>`<button class="line-chip line-chip-button" data-rome-line="${escapeHtml(line.id)}" style="background:${line.color};color:${idealTextColor(line.color)}">${escapeHtml(formatRomeLineName(line))}</button>`).join("")}</div><div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(profile.about)}</p></div><div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>${escapeHtml(profile.background)}</p></div><div class="detail-section"><div class="info-row"><span>Coordinates</span><b>${Number(station.lat).toFixed(5)}, ${Number(station.lon).toFixed(5)}</b></div></div><div class="detail-actions compact-action-row"><button class="secondary-btn compact-btn" id="rome-focus-station-btn">Focus station</button><button class="primary-btn compact-btn" id="rome-route-station-btn">${!el("route-editor-sheet")?.classList.contains("hidden")?"Use as route endpoint":"Start route here"}</button></div>`;
+  openDetail(); bringPanelToFront(el("detail-card"));
+  content.querySelectorAll("[data-rome-line]").forEach(button=>button.addEventListener("click",()=>{const line=romeLineById.get(button.dataset.romeLine);if(line)selectRomeLine(line,{showInfo:true});}));
+  content.querySelector("#rome-focus-station-btn")?.addEventListener("click",()=>{setPersistentTransportFocus({type:"station",family,id:station.id,label:station.name,station,city:"rome"});applyLayerState();});
+  content.querySelector("#rome-route-station-btn")?.addEventListener("click",()=>{
+    if (!el("route-editor-sheet")?.classList.contains("hidden") && useStationInOpenRoute(station,family)) return;
+    const service=family==="metro"?station.lines?.[0]?.id:station.services?.find(line=>line.family===family)?.id;
+    startRouteWithSegment({mode:family,service:service||"",kind:"line",startStationId:station.id,startStationName:station.name});
+  });
+}
+
+function clearRomeCache() {
+  Object.keys(localStorage).filter(key=>key.startsWith(ROME_CACHE_PREFIX)).forEach(key=>localStorage.removeItem(key));
+}
+
+async function refreshRomeData() {
+  clearRomeCache(); romeCoreLoaded=false; romeTramLoaded=false; romeTramStopsLoaded=false;
+  clearRomeTransportRenderings();
+  await ensureRomeCore(true);
+  if (layerState.tram) await ensureRomeTrams(true);
+  if (layerState.tram) ensureRomeTramStops(true).catch(()=>{});
+  if (cityInfoState.districts || cityInfoState.weather) await ensureRomeMunicipi(true);
+  if (cityInfoState.weather) await ensureRomeWeather(true);
+  if (cityInfoState.wind) await ensureRomeWind(true);
+  applyLayerState();
+}
+
+/* Rome Municipi + weather + wind */
+function romeMunicipioName(props={}) {
+  const raw=props.MUNICIPIO || props.C_ROMAN || props.OLD_CROMAN || props.OBJECTID;
+  const text=String(raw || "").trim();
+  return /^MUNICIPIO/i.test(text)?text:`Municipio ${text}`;
+}
+function romeMunicipioShade(index){const hue=Math.round((index*137.508+18)%360);return `hsl(${hue} 36% 40%)`;}
+function ensureRomeMunicipioLabelClass(){if(window.__RomeMunicipioLabel)return;window.__RomeMunicipioLabel=class extends HtmlOverlay{constructor(item){super(item.position,"borough-label-overlay rome-municipio-label");this.item=item;}onAdd(){super.onAdd();this.updateContent();}updateContent(){if(!this.div)return;const weather=romeMunicipiWeather.get(this.item.name);const show=cityInfoState.weather&&weather;this.div.innerHTML=`<div class="borough-label-name">${escapeHtml(this.item.name)}</div>${show?`<div class="borough-label-weather"><span>${weather.emoji}</span><b>${Math.round(weather.temperature)}°C</b><small>${escapeHtml(weather.label)}</small></div>`:""}`;this.div.classList.toggle("weather-on",!!show);}};}
+
+async function ensureRomeMunicipi(force=false){
+  if(romeMunicipiReady&&!force)return;
+  if(!map)return;
+  if(force&&romeMunicipiLayer){romeMunicipiLayer.setMap(null);romeMunicipiLayer=null;romeMunicipiReady=false;}
+  const cacheKey=`${ROME_CACHE_PREFIX}municipi`;let geo=!force?getCache(cacheKey):null;if(!geo){geo=await fetchRomeArcGisGeoJson(ROME_ARCGIS.municipi);setCache(cacheKey,geo);}
+  romeMunicipiLayer=new google.maps.Data();const features=romeMunicipiLayer.addGeoJson(geo||{});const items=[];
+  features.forEach((feature,index)=>{const props={};feature.forEachProperty((value,key)=>props[key]=value);const name=romeMunicipioName(props);const position=featureAverageLatLng(feature);if(position)items.push({feature,name,position});feature.setProperty("__romeColor",romeMunicipioShade(index));});
+  romeMunicipiCentroids=items.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));romeMunicipiReady=true;rebuildRomeMunicipioLabels();applyRomeCityInfoState();
+}
+function rebuildRomeMunicipioLabels(){romeMunicipiLabels.forEach(item=>item.setMap(null));romeMunicipiLabels=[];if(!romeMunicipiReady||!map)return;ensureRomeMunicipioLabelClass();for(const item of romeMunicipiCentroids){const overlay=new window.__RomeMunicipioLabel(item);overlay.setMap(map);overlay.setVisible(false);romeMunicipiLabels.push(overlay);}refreshRomeMunicipioLabels();}
+function refreshRomeMunicipioLabels(){const zoom=map?.getZoom?.()||12;const visible=currentCityId==="rome"&&(cityInfoState.districts||cityInfoState.weather)&&zoom>=10;romeMunicipiLabels.forEach(overlay=>{overlay.setVisible(visible);overlay.updateContent?.();if(overlay.div){overlay.div.classList.toggle("borough-label-compact",zoom<=11);overlay.div.style.opacity=zoom<=10?".72":zoom<=11?".84":".96";}});}
+async function ensureRomeWeather(force=false){if(!romeMunicipiReady)await ensureRomeMunicipi();if(!force&&romeMunicipiWeather.size)return;if(romeWeatherPromise&&!force)return romeWeatherPromise;romeWeatherPromise=(async()=>{const coords=romeMunicipiCentroids;if(!coords.length)return;const lats=coords.map(i=>i.position.lat.toFixed(5)).join(","),lngs=coords.map(i=>i.position.lng.toFixed(5)).join(",");const url=`https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lats)}&longitude=${encodeURIComponent(lngs)}&current=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m&temperature_unit=celsius&wind_speed_unit=kmh&timezone=Europe%2FRome`;const res=await fetch(url);if(!res.ok)throw new Error(`Weather request returned ${res.status}`);let data=await res.json();if(!Array.isArray(data))data=[data];romeMunicipiWeather=new Map();coords.forEach((item,index)=>{const current=data[index]?.current||{};romeMunicipiWeather.set(item.name,{temperature:Number(current.temperature_2m),windSpeed:Number(current.wind_speed_10m),windDirection:Number(current.wind_direction_10m),...weatherCodeInfo(current.weather_code)});});refreshRomeMunicipioLabels();})().catch(err=>{console.warn("Rome weather unavailable",err);showToast("Rome weather is temporarily unavailable.",3000);}).finally(()=>romeWeatherPromise=null);return romeWeatherPromise;}
+function romeWindGrid(){const points=[];const rows=5,cols=7,south=41.73,north=42.08,west=12.25,east=12.73;for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)points.push({lat:south+(north-south)*(r+.5)/rows,lng:west+(east-west)*(c+.5)/cols});return points;}
+function clearRomeWind(){romeWindOverlays.forEach(item=>item.setMap(null));romeWindOverlays=[];}
+async function ensureRomeWind(force=false){if(romeWindPromise&&!force)return romeWindPromise;if(force)clearRomeWind();romeWindPromise=(async()=>{const points=romeWindGrid(),lats=points.map(p=>p.lat.toFixed(4)).join(","),lngs=points.map(p=>p.lng.toFixed(4)).join(",");const url=`https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lats)}&longitude=${encodeURIComponent(lngs)}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=kmh&timezone=Europe%2FRome`;const res=await fetch(url);if(!res.ok)throw new Error(`Wind request returned ${res.status}`);let data=await res.json();if(!Array.isArray(data))data=[data];ensureWindArrowOverlayClass();points.forEach((position,index)=>{const current=data[index]?.current||{};const overlay=new window.__V13FWindArrowOverlay(position,Number(current.wind_speed_10m)||0,Number(current.wind_direction_10m)||0);overlay.setMap(map);overlay.setVisible(currentCityId==="rome"&&cityInfoState.wind);romeWindOverlays.push(overlay);});})().catch(err=>{console.warn("Rome wind unavailable",err);showToast("Rome wind is temporarily unavailable.",3000);}).finally(()=>romeWindPromise=null);return romeWindPromise;}
+function applyRomeCityInfoState(){const inRome=currentCityId==="rome";if(romeMunicipiLayer){romeMunicipiLayer.setMap(inRome&&cityInfoState.districts?map:null);romeMunicipiLayer.setStyle(feature=>({fillColor:feature.getProperty("__romeColor")||"#765c55",fillOpacity:cityInfoState.districts?.23:0,strokeColor:"#e5d8cc",strokeOpacity:cityInfoState.districts?.48:0,strokeWeight:cityInfoState.districts?1.05:0,clickable:false,zIndex:2}));}refreshRomeMunicipioLabels();romeWindOverlays.forEach(item=>item.setVisible(inRome&&cityInfoState.wind));}
+
+/* --- v1.4B overrides: city availability, layers, search, route builder --- */
+CITY_CONFIG.rome.status="Rome ready · Metro A/B/B1/C + rail + tram + Municipi/weather/wind.";
+
+const restoreCityLayerMemoryV14AForB=restoreCityLayerMemory;
+restoreCityLayerMemory=function(cityId){if(cityId!=="rome")return restoreCityLayerMemoryV14AForB(cityId);const saved=cityLayerMemory[cityId]||{};layerState.metro=!!saved.metro;layerState.rail=!!saved.rail;layerState.tram=!!saved.tram;layerState.places=!!saved.places;cityInfoState.districts=!!saved.districts;cityInfoState.weather=!!saved.weather;cityInfoState.wind=!!saved.wind;};
+
+cityTransportAvailable=function(){return currentCityId==="london"||currentCityId==="rome";};
+
+const toggleLayerV14AForB=toggleLayer;
+toggleLayer=function(name){
+  if(currentCityId!=="rome")return toggleLayerV14AForB(name);
+  if(!["metro","rail","tram","places"].includes(name))return;
+  activeFavoriteRouteId=null;transientTransportSelection=null;persistentTransportFocus=null;updateRouteFocusChip();updateItemFocusChip();layerState[name]=!layerState[name];saveCurrentCityLayerMemory();
+  if(name==="metro"&&layerState.metro)ensureRomeCore().then(()=>applyLayerState());
+  if(name==="rail"&&layerState.rail)ensureRomeCore().then(()=>applyLayerState());
+  if(name==="tram"&&layerState.tram)ensureRomeTrams().then(()=>{applyLayerState();ensureRomeTramStops().catch(()=>{});});
+  applyLayerState();syncV13EPanelUI();
+};
+
+const toggleCityInfoLayerV14AForB=toggleCityInfoLayer;
+toggleCityInfoLayer=async function(name){
+  if(currentCityId!=="rome")return toggleCityInfoLayerV14AForB(name);
+  cityInfoState[name]=!cityInfoState[name];saveCurrentCityLayerMemory();syncV13FCityButtons();
+  try{if((name==="districts"||name==="weather")&&(cityInfoState.districts||cityInfoState.weather))await ensureRomeMunicipi();if(name==="weather"&&cityInfoState.weather)await ensureRomeWeather();if(name==="wind"&&cityInfoState.wind)await ensureRomeWind();}catch(err){console.warn(err);cityInfoState[name]=false;syncV13FCityButtons();showToast(`${name} layer could not load.`,3000);}applyLayerState();applyBaseMapStyle();
+};
+
+const applyLayerStateV14AForB=applyLayerState;
+applyLayerState=function(){applyLayerStateV14AForB();if(currentCityId==="rome"){
+  if(boroughDataLayer)boroughDataLayer.setMap(null);boroughLabelOverlays.forEach(item=>item.setVisible(false));windOverlays.forEach(item=>item.setVisible(false));
+}
+applyRomeLayerState();applyRomeCityInfoState();refreshPreciseRouteHighlights();};
+
+const scheduleLineLabelRefreshV14AForB=scheduleLineLabelRefresh;
+scheduleLineLabelRefresh=function(){scheduleLineLabelRefreshV14AForB();clearTimeout(romeLabelRefreshTimer);if(currentCityId==="rome"&&(layerState.metro||layerState.rail||layerState.tram))romeLabelRefreshTimer=setTimeout(()=>{rebuildRomeLineLabels();applyLayerState();},300);};
+
+const switchCityV14AForB=switchCity;
+switchCity=async function(nextCityId,options={}){await switchCityV14AForB(nextCityId,options);if(currentCityId==="rome"){await ensureRomeCore().catch(()=>{});if(layerState.tram)await ensureRomeTrams().catch(()=>{});if(cityInfoState.districts||cityInfoState.weather)await ensureRomeMunicipi().catch(()=>{});if(cityInfoState.weather)await ensureRomeWeather().catch(()=>{});if(cityInfoState.wind)await ensureRomeWind().catch(()=>{});}applyLayerState();updateV14CityUI();updateDataAttributionV14B();};
+
+const updateV14CityUIV14AForB=updateV14CityUI;
+updateV14CityUI=function(){updateV14CityUIV14AForB();updateDataAttributionV14B();};
+function updateDataAttributionV14B(){const node=el("data-attribution");if(!node)return;node.textContent=currentCityId==="rome"?"Rome transport + Municipi © Roma Servizi per la Mobilità / ATAC · Weather © Open-Meteo":"Transport data © TfL · Tube track geometry © OpenStreetMap contributors · Weather © Open-Meteo";}
+
+/* Search */
+const buildV13ESearchResultsV14AForB=buildV13ESearchResults;
+buildV13ESearchResults=function(query){const base=buildV13ESearchResultsV14AForB(query);if(currentCityId!=="rome")return base;const q=normalizeSearch(query);const out=[...base];for(const line of romeLineById.values()){if(normalizeSearch(`${line.code} ${line.name} ${line.displayName}`).includes(q))out.push({type:"rome-line",line});}for(const station of romeMetroStationRegistry.values()){if(normalizeSearch(`${station.name} ${(station.lines||[]).map(formatRomeLineName).join(" ")}`).includes(q))out.push({type:"rome-station",station,family:"metro"});}for(const station of romeSurfaceStationRegistry.values()){if(normalizeSearch(`${station.name} ${(station.services||[]).map(formatRomeLineName).join(" ")}`).includes(q))out.push({type:"rome-station",station,family:station.services?.some(line=>line.family==="rail")?"rail":"tram"});}return out.slice(0,18);};
+const searchResultHtmlV14AForB=searchResultHtml;
+searchResultHtml=function(result,index){if(result.type==="rome-line")return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon" style="background:${result.line.color};color:${idealTextColor(result.line.color)}">${escapeHtml(result.line.code)}</div><div><div class="result-title">${escapeHtml(formatRomeLineName(result.line))}</div><div class="result-sub">Rome ${escapeHtml(result.line.family)}</div></div></button>`;if(result.type==="rome-station"){const services=[...(result.station.lines||[]),...(result.station.surfaceServices||result.station.services||[])];return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon">${result.family==="metro"?"M":result.family==="tram"?"T":"R"}</div><div><div class="result-title">${escapeHtml(result.station.name)}</div><div class="result-sub">${escapeHtml(services.map(formatRomeLineName).join(" · ")||"Rome transport")}</div></div></button>`;}return searchResultHtmlV14AForB(result,index);};
+const selectSearchResultV14AForB=selectSearchResult;
+selectSearchResult=function(result){if(result?.type==="rome-line"){hideSearchResults();toggleLayersPanel(false);selectRomeLine(result.line,{fit:true,showInfo:true});return;}if(result?.type==="rome-station"){hideSearchResults();toggleLayersPanel(false);map.panTo({lat:result.station.lat,lng:result.station.lon});map.setZoom(16);selectRomeStation(result.station,result.family,{showInfo:true});return;}return selectSearchResultV14AForB(result);};
+const resultTitleV14AForB=resultTitle;
+resultTitle=function(result){if(result?.type==="rome-line")return formatRomeLineName(result.line);if(result?.type==="rome-station")return result.station.name;return resultTitleV14AForB(result);};
+
+/* Route builder */
+const routeStationsForServiceV14AForB=routeStationsForService;
+routeStationsForService=function(mode,service){if(String(service).startsWith("rome-")){return mode==="metro"?[...romeMetroStationRegistry.values()].filter(s=>s.lines?.some(l=>l.id===service)).sort((a,b)=>a.name.localeCompare(b.name)):[...romeSurfaceStationRegistry.values()].filter(s=>s.services?.some(l=>l.id===service)).sort((a,b)=>a.name.localeCompare(b.name));}return routeStationsForServiceV14AForB(mode,service);};
+const getStationForSegmentV14AForB=getStationForSegment;
+getStationForSegment=function(mode,id){if(String(id).startsWith("rome:"))return mode==="metro"?romeMetroStationRegistry.get(id):romeSurfaceStationRegistry.get(id);return getStationForSegmentV14AForB(mode,id);};
+const defaultServiceForStationV14AForB=defaultServiceForStation;
+defaultServiceForStation=function(mode,stationId){if(String(stationId).startsWith("rome:")){if(mode==="metro")return romeMetroStationRegistry.get(stationId)?.lines?.[0]?.id||"rome-metro-a";const station=romeSurfaceStationRegistry.get(stationId);return station?.services?.find(l=>l.family===mode)?.id||station?.services?.[0]?.id||"";}return defaultServiceForStationV14AForB(mode,stationId);};
+const v13fServiceOptionsV14AForB=v13fServiceOptions;
+v13fServiceOptions=function(segment){if(currentCityId!=="rome"&&!String(segment.service).startsWith("rome-"))return v13fServiceOptionsV14AForB(segment);const lines=[...romeLineById.values()].filter(line=>line.family===segment.mode).sort((a,b)=>formatRomeLineName(a).localeCompare(formatRomeLineName(b),undefined,{numeric:true}));return lines.map(line=>`<option value="${escapeHtml(line.id)}" ${line.id===segment.service?"selected":""}>${escapeHtml(formatRomeLineName(line))}</option>`).join("");};
+const transportGeometryForSegmentV14AForB=transportGeometryForSegment;
+transportGeometryForSegment=function(segment){if(String(segment.service).startsWith("rome-"))return segment.mode==="metro"?romeMetroGeometryRegistry.get(segment.service)||[]:romeSurfaceGeometryRegistry.get(segment.service)||[];return transportGeometryForSegmentV14AForB(segment);};
+const segmentColorV14AForB=segmentColor;
+segmentColor=function(segment){if(String(segment.service).startsWith("rome-"))return romeLineById.get(segment.service)?.color||"#79B6FF";return segmentColorV14AForB(segment);};
+const segmentDisplayNameV14AForB=segmentDisplayName;
+segmentDisplayName=function(raw){const segment=normalizeRouteSegment(raw);if(String(segment.service).startsWith("rome-")){const line=romeLineById.get(segment.service);const base=line?formatRomeLineName(line):segment.service;return segment.startStationId&&segment.endStationId?`${base} · ${segment.startStationName||getStationForSegment(segment.mode,segment.startStationId)?.name||"Start"} → ${segment.endStationName||getStationForSegment(segment.mode,segment.endStationId)?.name||"End"}`:base;}return segmentDisplayNameV14AForB(raw);};
+
+function romeDefaultService(mode){if(mode==="metro")return "rome-metro-a";return [...romeLineById.values()].find(line=>line.family===mode)?.id||"";}
+const openRouteEditorV14AForB=openRouteEditor;
+openRouteEditor=function(){if(currentCityId!=="rome")return openRouteEditorV14AForB();routeEditorSegments=[normalizeRouteSegment({mode:"metro",service:"rome-metro-a"})];el("route-name-input").value="";renderRouteEditorSegments();el("route-editor-sheet").classList.remove("hidden");document.body.classList.add("detail-open");restorePanelPosition(el("route-editor-sheet"));bringPanelToFront(el("route-editor-sheet"));};
+const addRouteEditorSegmentV14AForB=addRouteEditorSegment;
+addRouteEditorSegment=function(){if(currentCityId!=="rome")return addRouteEditorSegmentV14AForB();routeEditorSegments.push(normalizeRouteSegment({mode:"metro",service:"rome-metro-a"}));renderRouteEditorSegments();};
+
+/* Patch the mode-change defaults in route editor without changing the visible UI. */
+const renderRouteEditorSegmentsV14AForB=renderRouteEditorSegments;
+renderRouteEditorSegments=function(){renderRouteEditorSegmentsV14AForB();if(currentCityId!=="rome")return;const node=el("route-segments");if(!node)return;node.querySelectorAll("[data-segment-mode]").forEach(select=>{const clone=select.cloneNode(true);select.replaceWith(clone);clone.addEventListener("change",async()=>{const index=Number(clone.dataset.segmentMode),mode=clone.value;if(mode==="rail")await ensureRomeCore();if(mode==="tram")await ensureRomeTrams();routeEditorSegments[index]=normalizeRouteSegment({mode,service:["metro","rail","tram"].includes(mode)?romeDefaultService(mode):""});renderRouteEditorSegments();});});};
+
+const activateFavoriteRouteV14AForB=activateFavoriteRoute;
+activateFavoriteRoute=function(routeId,options={}){const route=favoriteRoutes.find(item=>item.id===routeId);if(!route||getRouteCityId(route)!=="rome")return activateFavoriteRouteV14AForB(routeId,options);activeFavoriteRouteId=route.id;transientTransportSelection=null;persistentTransportFocus=null;route.useCount=Number(route.useCount||0)+1;route.lastUsedAt=Date.now();saveFavoriteRoutes();layerState.metro=route.segments?.some(s=>s.mode==="metro")||false;layerState.rail=route.segments?.some(s=>s.mode==="rail")||false;layerState.tram=route.segments?.some(s=>s.mode==="tram")||false;layerState.places=false;applyLayerState();updateRouteFocusChip();updateItemFocusChip();focusFavoriteRoute(route);if(options.showInfo!==false)showFavoriteRouteInfo(route);refreshPreciseRouteHighlights();};
+const focusFavoriteRouteV14AForB=focusFavoriteRoute;
+focusFavoriteRoute=function(route){if(getRouteCityId(route)!=="rome")return focusFavoriteRouteV14AForB(route);const bounds=new google.maps.LatLngBounds();for(const segment of route.segments||[]){const path=precisePathForSegment(segment);if(path.length)path.forEach(point=>bounds.extend(point));else{const paths=transportGeometryForSegment(segment);paths.flat().forEach(point=>bounds.extend(point));}}if(!bounds.isEmpty())map.fitBounds(bounds,48);};
+
+/* Boot/runtime integration */
+const initMapV14AForB=initMap;
+initMap=function(){initMapV14AForB();if(currentCityId==="rome"){ensureRomeCore().then(()=>applyLayerState()).catch(()=>{});if(layerState.tram)ensureRomeTrams().catch(()=>{});}updateDataAttributionV14B();};
+
+mapRomeZoomListenerInstalled=false;
+function installRomeZoomListener(){if(mapRomeZoomListenerInstalled||!map)return;mapRomeZoomListenerInstalled=true;map.addListener("zoom_changed",()=>{if(currentCityId==="rome"){refreshRomeMunicipioLabels();scheduleLineLabelRefresh();}});}
+const initMapV14BPrevious=initMap;
+initMap=function(){initMapV14BPrevious();installRomeZoomListener();};
+
+/* Refresh data button gets a Rome-aware path. The original London listener still exists, so a Rome click is intercepted here first. */
+el("refresh-tfl-btn")?.addEventListener("click",async event=>{if(currentCityId!=="rome")return;event.stopImmediatePropagation();hideModal("settings-modal");showToast("Refreshing Rome transport + city data…",2000);await refreshRomeData();showToast("Rome data refreshed.",1800);},true);
+
+updateV14CityUI();
+
+
+
+/* v1.4B route-editor safety patches for Rome */
+const renderRouteEditorSegmentsRomeBase = renderRouteEditorSegments;
+renderRouteEditorSegments = function() {
+  if (currentCityId === "rome") {
+    routeEditorSegments = routeEditorSegments.map(segment => {
+      const normalized = normalizeRouteSegment(segment);
+      if (["metro","rail","tram"].includes(normalized.mode) && !romeLineById.has(normalized.service)) {
+        normalized.service = romeDefaultService(normalized.mode);
+        normalized.startStationId = ""; normalized.endStationId = ""; normalized.startStationName = ""; normalized.endStationName = "";
+      }
+      return normalized;
+    });
+  }
+  renderRouteEditorSegmentsRomeBase();
+  if (currentCityId !== "rome") return;
+  const node = el("route-segments");
+  if (!node) return;
+  node.querySelectorAll("[data-segment-mode]").forEach(select => {
+    const clone = select.cloneNode(true); select.replaceWith(clone);
+    clone.addEventListener("change", async () => {
+      const index = Number(clone.dataset.segmentMode), mode = clone.value;
+      if (mode === "rail") await ensureRomeCore();
+      if (mode === "tram") await ensureRomeTrams();
+      routeEditorSegments[index] = normalizeRouteSegment({ mode, service: ["metro","rail","tram"].includes(mode) ? romeDefaultService(mode) : "" });
+      renderRouteEditorSegments();
+    });
+  });
+  node.querySelectorAll("[data-remove-segment]").forEach(button => {
+    const clone = button.cloneNode(true); button.replaceWith(clone);
+    clone.addEventListener("click", () => {
+      routeEditorSegments.splice(Number(clone.dataset.removeSegment), 1);
+      if (!routeEditorSegments.length) routeEditorSegments.push(normalizeRouteSegment({ mode:"metro", service:"rome-metro-a" }));
+      renderRouteEditorSegments();
+    });
+  });
+};
+
+const startRouteWithSegmentV14BBase = startRouteWithSegment;
+startRouteWithSegment = async function(segment) {
+  const normalized = normalizeRouteSegment(segment);
+  if (currentCityId !== "rome" && !String(normalized.service).startsWith("rome-")) return startRouteWithSegmentV14BBase(segment);
+  transientTransportSelection = null; persistentTransportFocus = null; updateItemFocusChip();
+  if (normalized.mode === "rail") await ensureRomeCore();
+  if (normalized.mode === "tram") { await ensureRomeTrams(); await ensureRomeTramStops().catch(()=>{}); }
+  closeDetail(false);
+  routeEditorSegments = [normalized];
+  el("route-name-input").value = "";
+  renderRouteEditorSegments();
+  el("route-editor-sheet").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+  restorePanelPosition(el("route-editor-sheet")); bringPanelToFront(el("route-editor-sheet"));
+  showToast(normalized.startStationId ? "Route started here. Choose the other station on the map or in the route panel." : "Route started. Choose start and end stations.", 2800);
+};
+
+const applyBaseMapStyleV14BBase = applyBaseMapStyle;
+applyBaseMapStyle = function() {
+  if (!map || activeMapType !== "roadmap") return;
+  if (currentCityId === "rome") {
+    if (cityInfoState.wind) { map.setOptions({ styles: V13F_WIND_MAP_STYLES }); return; }
+    const focus = !getTransportSelection() && !getActiveFavoriteRoute() && layerState.metro && !layerState.rail && !layerState.tram && !layerState.places && !cityInfoState.districts && !cityInfoState.weather;
+    map.setOptions({ styles: focus ? METRO_FOCUS_MAP_STYLES : [] });
+    return;
+  }
+  applyBaseMapStyleV14BBase();
+};
 
 
 /* PWA registration stays disabled in this development build.

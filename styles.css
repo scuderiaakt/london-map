@@ -1641,3 +1641,13 @@ body.city-flight-active .city-choice { opacity: .62; }
   .city-arrival-name { font-size: clamp(42px, 14vw, 68px); }
   .city-arrival-gesture { font-size: 15px; }
 }
+
+/* v1.4B — Rome */
+.rome-line-label { box-shadow: 0 4px 14px rgba(0,0,0,.38); }
+.rome-station-node { z-index: 32; }
+.rome-surface-station-node { z-index: 31; }
+.rome-municipio-label .borough-label-name { letter-spacing: .02em; }
+.rome-municipio-label.weather-on { min-width: 92px; }
+@media (max-width: 720px) {
+  .rome-municipio-label { transform: translate(-50%, -50%) scale(.88); }
+}
