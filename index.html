@@ -6,66 +6,267 @@
   <meta name="theme-color" content="#0b1017" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="London Map" />
-  <title>London Life Map</title>
+  <meta name="apple-mobile-web-app-title" content="Our Cities" />
+  <title>Our Cities Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=1.4d" />
 </head>
 <body>
   <main id="app">
-    <div id="map"></div>
 
-    <header class="topbar glass">
-      <div class="brand">
-        <div class="brand-dot"></div>
-        <div>
-          <strong>London Life Map</strong>
-          <span id="network-status">Loading Tube network…</span>
+    <section id="welcome-screen" class="welcome-screen hidden" aria-label="Welcome to Our Cities">
+      <div class="welcome-ambient welcome-ambient-a"></div>
+      <div class="welcome-ambient welcome-ambient-b"></div>
+      <div class="welcome-card">
+        <div class="welcome-kicker">OUR CITIES</div>
+        <h1>Welcome</h1>
+        <p>Choose where your map begins.</p>
+        <div class="welcome-profiles">
+          <button class="welcome-profile welcome-kagan" data-welcome-profile="kagan">
+            <span class="welcome-profile-mark">K</span>
+            <span><b>Welcome Kağan</b><small>Start in London</small></span>
+          </button>
+          <button class="welcome-profile welcome-ela" data-welcome-profile="ela">
+            <span class="welcome-profile-mark">♥</span>
+            <span><b>Welcome Ela</b><small>Start in Rome</small></span>
+          </button>
         </div>
+        <div class="welcome-note">You can switch profiles later in Settings.</div>
       </div>
-      <button id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings">⚙</button>
-    </header>
+    </section>
+    <div id="welcome-heart" class="welcome-heart" aria-hidden="true">♥</div>
+    <div id="map" aria-label="Interactive city map"></div>
+    <div id="city-arrival" class="city-arrival" aria-live="polite"><div class="city-arrival-name"></div><div class="city-arrival-gesture"></div></div>
 
-    <section class="map-controls glass" aria-label="Map controls">
-      <div class="segmented">
-        <button id="roadmap-btn" class="control-btn active">Map</button>
-        <button id="satellite-btn" class="control-btn">Satellite</button>
+    <section class="layers-shell" aria-label="Map layers and search">
+      <button id="layers-menu-btn" class="layers-menu-btn glass" aria-expanded="false" aria-controls="layers-panel" aria-label="Open map layers" title="Layers">▱</button>
+
+      <div id="layers-panel" class="layers-panel glass hidden">
+        <div class="layers-panel-head">
+          <div>
+            <div class="panel-kicker">MAP OVERLAYS</div>
+            <div class="panel-title">Layers</div>
+          </div>
+          <button id="layers-panel-close" class="panel-close" aria-label="Close layers">×</button>
+        </div>
+
+        <section class="city-switcher" aria-label="Choose city">
+          <div class="layer-group-head city-switcher-head">
+            <div>
+              <div class="layer-group-title">CITY</div>
+              <div id="city-switcher-sub" class="layer-group-sub">Move between your cities</div>
+            </div>
+          </div>
+          <div id="city-switcher-row" class="city-switcher-row">
+            <button class="city-choice" data-city="london"><span class="city-choice-name">London</span></button>
+            <button class="city-choice city-choice-ela" data-city="rome"><span class="city-choice-name">Rome</span><span class="city-choice-note">Ela ❤️</span></button>
+            <button class="city-choice" data-city="istanbul"><span class="city-choice-name">İstanbul</span></button>
+            <button class="city-choice" data-city="izmir"><span class="city-choice-name">İzmir</span></button>
+          </div>
+          <div id="city-data-status" class="city-data-status"></div>
+        </section>
+
+        <div class="panel-search-wrap">
+          <div class="search-box panel-search-box">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input
+              id="search-input"
+              type="search"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              placeholder="Search this city…"
+              aria-label="Search this city"
+            />
+            <button id="search-clear" class="search-clear hidden" aria-label="Clear search">×</button>
+            <div id="search-results" class="search-results hidden" role="listbox"></div>
+          </div>
+        </div>
+
+        <section class="layer-group" aria-label="Favorite place layers">
+          <div class="layer-group-head">
+            <div>
+              <div class="layer-group-title">FAVORITES</div>
+              <div class="layer-group-sub">Choose any combination</div>
+            </div>
+            <button id="favorites-manage-btn" class="tiny-panel-action">Manage</button>
+          </div>
+          <div id="favorite-category-row" class="layer-toggle-row favorite-toggle-row" aria-label="Favorite categories">
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="all" aria-pressed="false"><span class="panel-layer-icon">★</span><span class="panel-layer-label">All</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="School" aria-pressed="false"><span class="panel-layer-icon">🎓</span><span class="panel-layer-label">School</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Food" aria-pressed="false"><span class="panel-layer-icon">🍴</span><span class="panel-layer-label">Food</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Market" aria-pressed="false"><span class="panel-layer-icon">🛒</span><span class="panel-layer-label">Market</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Health" aria-pressed="false"><span class="panel-layer-icon">♥</span><span class="panel-layer-label">Health</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Home" aria-pressed="false"><span class="panel-layer-icon">⌂</span><span class="panel-layer-label">Home</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Shopping" aria-pressed="false"><span class="panel-layer-icon">🛍</span><span class="panel-layer-label">Shopping</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Sport" aria-pressed="false"><span class="panel-layer-icon">🏃</span><span class="panel-layer-label">Sport</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Social" aria-pressed="false"><span class="panel-layer-icon">☻</span><span class="panel-layer-label">Social</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Transport" aria-pressed="false"><span class="panel-layer-icon">◆</span><span class="panel-layer-label">Transport</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Tech" aria-pressed="false"><span class="panel-layer-icon">⌘</span><span class="panel-layer-label">Tech</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Admin" aria-pressed="false"><span class="panel-layer-icon">▤</span><span class="panel-layer-label">Admin</span></button>
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Other" aria-pressed="false"><span class="panel-layer-icon">●</span><span class="panel-layer-label">Other</span></button>
+          </div>
+        </section>
+
+        <section class="layer-group" aria-label="Transportation layers">
+          <div class="layer-group-head">
+            <div>
+              <div class="layer-group-title">TRANSPORTATION</div>
+              <div class="layer-group-sub">Stack as many as you want</div>
+            </div>
+          </div>
+          <div class="layer-toggle-row">
+            <button id="panel-metro-toggle" class="panel-layer-toggle" data-layer="metro" aria-pressed="false"><span class="panel-layer-icon metro-symbol">M</span><span class="panel-layer-label">Metro</span></button>
+            <button id="panel-rail-toggle" class="panel-layer-toggle" data-layer="rail" aria-pressed="false"><span class="panel-layer-icon rail-symbol">◇</span><span class="panel-layer-label">Rail</span></button>
+            <button id="panel-tram-toggle" class="panel-layer-toggle" data-layer="tram" aria-pressed="false"><span class="panel-layer-icon tram-symbol">▰</span><span class="panel-layer-label">Tram</span></button>
+            <button class="panel-layer-toggle coming-toggle" data-layer-coming="bus" aria-pressed="false"><span class="panel-layer-icon">B</span><span class="panel-layer-label">Bus</span><span class="soon-badge">later</span></button>
+          </div>
+        </section>
+
+        <section class="layer-group" aria-label="City information layers">
+          <div class="layer-group-head">
+            <div>
+              <div class="layer-group-title">CITY INFORMATION</div>
+              <div class="layer-group-sub">Analytical overlays</div>
+            </div>
+          </div>
+          <div class="layer-toggle-row">
+            <button id="panel-districts-toggle" class="panel-layer-toggle" data-city-layer="districts" aria-pressed="false"><span class="panel-layer-icon">▦</span><span class="panel-layer-label">Districts</span></button>
+            <button id="panel-weather-toggle" class="panel-layer-toggle" data-city-layer="weather" aria-pressed="false"><span class="panel-layer-icon">℃</span><span class="panel-layer-label">Weather</span></button>
+            <button id="panel-wind-toggle" class="panel-layer-toggle" data-city-layer="wind" aria-pressed="false"><span class="panel-layer-icon">➤</span><span class="panel-layer-label">Wind</span></button>
+            <button id="panel-traffic-toggle" class="panel-layer-toggle" aria-pressed="false"><span class="panel-layer-icon">≋</span><span class="panel-layer-label">Traffic</span></button>
+          </div>
+        </section>
+
+        <div class="layer-panel-footnote">Everything here is a layer. Selecting one never turns another off unless you explicitly tap it again.</div>
       </div>
-      <button id="traffic-btn" class="control-btn">Traffic</button>
-      <button id="underground-btn" class="control-btn underground-toggle">
-        <span class="tube-symbol">◎</span> Underground
-      </button>
+
+      <div class="legacy-layer-controls" aria-hidden="true">
+        <button id="metro-btn"></button><button id="rail-btn"></button><button id="tram-btn"></button><button id="places-btn"></button><button id="favorites-btn"></button><button id="traffic-btn"></button>
+      </div>
+
+      <button id="route-focus-chip" class="route-focus-chip glass hidden" aria-label="Open active favorite route">★ <span data-route-focus-name></span></button>
+      <button id="item-focus-chip" class="item-focus-chip glass hidden" aria-label="Exit focused transport item">◎ <span data-item-focus-name></span> · Exit focus</button>
     </section>
 
-    <aside id="line-legend" class="line-legend glass hidden" aria-label="Tube line legend"></aside>
+    <div class="corner-actions">
+      <button id="info-btn" class="floating-icon glass" aria-label="Map information" title="Information">ⓘ</button>
+      <button id="settings-btn" class="floating-icon glass" aria-label="Settings" title="Settings">⚙</button>
+    </div>
 
-    <section id="detail-card" class="detail-card glass hidden" aria-live="polite">
+    <section class="base-controls glass" aria-label="Base map controls">
+      <button id="roadmap-btn" class="base-control active">Map</button>
+      <button id="satellite-btn" class="base-control">Satellite</button>
+    </section>
+
+    <div class="right-actions" aria-label="Location and add controls">
+      <button id="location-btn" class="round-action glass" aria-label="Use my location" title="Use my location">◎</button>
+      <button id="add-btn" class="round-action add-action" aria-label="Add to map" title="Add to map">＋</button>
+    </div>
+
+    <div id="network-status" class="network-status glass">Loading Tube network…</div>
+    <div id="data-attribution" class="attribution glass">Transport data © TfL · Tube track geometry © OpenStreetMap contributors · Weather © Open-Meteo</div>
+
+    <section id="detail-card" class="detail-card glass hidden" aria-live="polite" aria-label="Map information">
+      <div class="sheet-handle" aria-hidden="true"></div>
       <button id="detail-close" class="detail-close" aria-label="Close">×</button>
       <div id="detail-content"></div>
     </section>
 
-    <div class="attribution glass">Data provided by Transport for London</div>
+    <section id="add-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Add to map">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="add-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">ADD TO MAP</div>
+      <h2>Add something</h2>
+      <div class="sub">Frequent places are saved on this device. Favorite routes can already combine Metro, Rail, Tram, Bus and walking segments.</div>
+      <div class="add-options">
+        <button class="add-option route-add-option" data-add-method="route"><span>★</span><b>Create favorite route</b><small>Build a reusable multi-mode route</small></button>
+        <button class="add-option" data-add-method="search"><span>⌕</span><b>Search location</b><small>Find a place or address in the current city</small></button>
+        <button class="add-option" data-add-method="tap"><span>⌖</span><b>Tap map</b><small>Pick an exact point</small></button>
+        <button class="add-option" data-add-method="current"><span>◎</span><b>Use current location</b><small>Use your device position</small></button>
+        <button class="add-option" data-add-method="centre"><span>＋</span><b>Use map centre</b><small>Use the point currently in view</small></button>
+      </div>
+    </section>
+
+    <section id="favorites-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Favorites">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="favorites-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">FAVORITES</div>
+      <h2 id="favorites-city-title">Your city</h2>
+      <div class="favorites-section">
+        <div class="favorites-heading"><span>Frequent Places</span><small>Saved on this device</small></div>
+        <div id="favorite-places-list" class="favorites-list"></div>
+      </div>
+      <div class="favorites-section">
+        <div class="favorites-heading"><span>Favorite Routes</span><small>Most used first</small></div>
+        <div id="favorite-routes-list" class="favorites-list"></div>
+      </div>
+    </section>
+
+    <section id="place-editor-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Save frequent place">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="place-editor-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">FREQUENT PLACE</div>
+      <h2>Save this place</h2>
+      <label class="field-label" for="place-name-input">Name</label>
+      <input id="place-name-input" class="form-control" type="text" placeholder="e.g. Imperial College London" />
+      <label class="field-label" for="place-category-input">Category</label>
+      <select id="place-category-input" class="form-control">
+        <option>School</option><option>Food</option><option>Market</option><option>Health</option><option>Home</option><option>Shopping</option><option>Sport</option><option>Social</option><option>Transport</option><option>Tech</option><option>Admin</option><option selected>Other</option>
+      </select>
+      <label class="field-label" for="place-note-input">Note</label>
+      <input id="place-note-input" class="form-control" type="text" placeholder="Optional note" />
+      <label class="favorite-important-row" for="place-important-input">
+        <input id="place-important-input" type="checkbox" />
+        <span><b>Important favorite</b><small>Show a larger marker and keep its name visible on the map.</small></span>
+      </label>
+      <div class="coordinate-readout">Location: <span id="place-coordinate-readout"></span></div>
+      <button id="save-place-btn" class="primary-btn full-btn">Save frequent place</button>
+    </section>
+
+    <section id="location-search-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Search location">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="location-search-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">SEARCH LOCATION</div>
+      <h2 id="location-search-title">Find a place</h2>
+      <div class="inline-search">
+        <input id="location-search-input" class="form-control" type="search" placeholder="Place name or address" />
+        <button id="location-search-btn" class="primary-btn">Search</button>
+      </div>
+      <div id="location-search-status" class="sub detail-section">Search the current city by place name or address.</div>
+      <div class="fineprint detail-section">This search uses Google's Geocoding service. If your project has only Maps JavaScript API enabled, the other add methods still work without it.</div>
+    </section>
+
+    <section id="route-editor-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Create favorite route">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="route-editor-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">FAVORITE ROUTE</div>
+      <h2>Create a route</h2>
+      <label class="field-label" for="route-name-input">Route name</label>
+      <input id="route-name-input" class="form-control" type="text" placeholder="e.g. Eastside → Heathrow" />
+      <div class="favorites-heading route-builder-heading"><span>Segments</span><small>Put them in travel order</small></div>
+      <div id="route-segments" class="route-segments"></div>
+      <button id="add-route-segment-btn" class="secondary-btn compact-btn">＋ Add segment</button>
+      <button id="save-route-btn" class="primary-btn full-btn">Save favorite route</button>
+      <div class="fineprint detail-section">Choose a service plus start and end stations. Finished transport segments glow on the map. Bus segments are saved for the later directions build.</div>
+    </section>
 
     <section id="key-modal" class="modal">
       <div class="modal-card">
         <div class="modal-kicker">GOOGLE MAPS SETUP</div>
         <h1>Connect Google Maps</h1>
         <p>
-          This map uses Google Maps for the dark basemap, satellite imagery, high-resolution zoom,
-          and live traffic. Paste your Maps JavaScript API key below. It is stored only in this browser.
+          This map uses Google Maps for the basemap, satellite imagery, high-resolution zoom and live traffic.
+          Paste your Maps JavaScript API key below. It is stored only in this browser.
         </p>
         <label for="api-key-input">Google Maps JavaScript API key</label>
         <input id="api-key-input" type="password" autocomplete="off" placeholder="AIza…" />
         <div class="modal-actions">
           <button id="save-key-btn" class="primary-btn">Open map</button>
-          <a class="text-link" href="https://developers.google.com/maps/documentation/javascript/get-api-key" target="_blank" rel="noreferrer">
-            Get a key
-          </a>
+          <a class="text-link" href="https://developers.google.com/maps/documentation/javascript/get-api-key" target="_blank" rel="noreferrer">Get a key</a>
         </div>
-        <p class="fineprint">
-          For a phone-friendly hosted version, restrict the key to the website domain after deployment.
-        </p>
+        <p class="fineprint">Keep the key restricted to your GitHub Pages domain and localhost.</p>
       </div>
     </section>
 
@@ -75,15 +276,17 @@
         <div class="modal-kicker">SETTINGS</div>
         <h2>Map settings</h2>
         <button id="replace-key-btn" class="secondary-btn">Replace Google Maps key</button>
-        <button id="refresh-tfl-btn" class="secondary-btn">Refresh Tube data</button>
-        <p class="fineprint">Tube geometry is cached on your device for 24 hours to make mobile loading faster.</p>
+        <button id="refresh-tfl-btn" class="secondary-btn">Refresh transport data</button>
+        <button id="switch-profile-btn" class="secondary-btn">Switch profile</button>
+        <p class="fineprint">Metro, Rail and Tram data are cached on your device for 24 hours to make mobile loading faster.</p>
       </div>
     </section>
+
+    <div id="toast" class="toast glass hidden" role="status" aria-live="polite"></div>
   </main>
 
-
   <script>
-    // Development mode: prevent an old service worker from serving stale JavaScript.
+    // Development: prevent old localhost service workers from serving stale JavaScript.
     if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.getRegistrations()
@@ -98,6 +301,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.2.0"></script>
+  <script src="app.js?v=1.4d"></script>
 </body>
 </html>
