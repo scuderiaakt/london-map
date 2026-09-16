@@ -152,7 +152,7 @@ function initMap() {
   map = new google.maps.Map(el("map"), {
     center: LONDON_CENTER,
     zoom: 12.4,
-    minZoom: 9,
+    minZoom: 2,
     maxZoom: 21,
     mapTypeId: google.maps.MapTypeId.ROADMAP,
     colorScheme: "DARK",
@@ -2945,7 +2945,7 @@ function initMap() {
   map = new google.maps.Map(el("map"), {
     center: LONDON_CENTER,
     zoom: 12.4,
-    minZoom: 9,
+    minZoom: 2,
     maxZoom: 21,
     mapTypeId: google.maps.MapTypeId.ROADMAP,
     colorScheme: "DARK",
@@ -5181,7 +5181,7 @@ function updateV14CityUI() {
   if (locationStatus && !locationStatus.dataset.userStatus) locationStatus.textContent = `Search ${config.name} by place name or address.`;
   const status = el("city-data-status");
   if (status) status.textContent = config.status;
-  document.title = `${config.name} · Our Cities Map`;
+  document.title = "Everything App by Kağan";
   syncV13EPanelUI();
   syncV13FCityButtons();
 }
@@ -7964,7 +7964,7 @@ v14dApplyCityTheme(); v14eSyncBusPlaceholder();
 console.info(`Our Cities Map ${V14E_VERSION} navigation + polish loaded`);
 
 /* ---------- v1.5: endpoint search, segment navigation, on-demand buses, airports ---------- */
-const V15_VERSION = "1.5";
+const V15_VERSION = "1.5.Fixed";
 const V15_FLIGHT_SEARCH_STORAGE = "ourCities.favoriteFlightSearches.v1";
 const V15_TIMEZONES = {
   london: "Europe/London",
@@ -8274,3 +8274,215 @@ updateV14CityUI=function(){updateV14CityUIV15Base();v15SyncBusButton();v15Update
 v15SyncBusButton();
 
 console.info(`Our Cities Map ${V15_VERSION} search-first navigation, buses and airports loaded`);
+
+
+/* ======================================================================
+   v1.5.Fixed — scoped search history, continent zoom, detailed roads,
+                  multimodal Fastest + estimated air arcs
+   ====================================================================== */
+const V15FIX_VERSION = "1.5.Fixed";
+const V15FIX_SEARCH_HISTORY_STORAGE = "everythingApp.searchHistory.v1";
+let v15fixSearchHistory = (() => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(V15FIX_SEARCH_HISTORY_STORAGE) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
+})();
+
+function v15fixHistoryKey(kind, cityId = currentCityId) { return `${kind}:${cityId || "global"}`; }
+function v15fixGetHistory(kind, cityId = currentCityId) {
+  const arr = v15fixSearchHistory[v15fixHistoryKey(kind, cityId)];
+  return Array.isArray(arr) ? arr.filter(Boolean).slice(0, 10) : [];
+}
+function v15fixSaveHistory() {
+  try { localStorage.setItem(V15FIX_SEARCH_HISTORY_STORAGE, JSON.stringify(v15fixSearchHistory)); } catch {}
+}
+function v15fixRemember(kind, text, cityId = currentCityId) {
+  const value = String(text || "").trim(); if (!value) return;
+  const key = v15fixHistoryKey(kind, cityId), old = v15fixGetHistory(kind, cityId);
+  v15fixSearchHistory[key] = [value, ...old.filter(x => normalizeSearch(x) !== normalizeSearch(value))].slice(0, 10);
+  v15fixSaveHistory();
+}
+function v15fixClearHistory(kind, cityId = currentCityId) {
+  delete v15fixSearchHistory[v15fixHistoryKey(kind, cityId)];
+  v15fixSaveHistory();
+}
+function v15fixRecentHeader(kind, label) {
+  return `<div class="recent-search-head"><span>${escapeHtml(label)}</span><button class="search-history-clear" data-clear-search-history="${escapeHtml(kind)}">Delete searches</button></div>`;
+}
+function v15fixBindClearHistory(container, kind, rerender) {
+  container?.querySelector(`[data-clear-search-history="${kind}"]`)?.addEventListener("click", event => {
+    event.preventDefault(); event.stopPropagation(); v15fixClearHistory(kind); rerender?.();
+  });
+}
+
+/* The old global recent list is intentionally no longer shared across search boxes. */
+rememberV13ESearch = function(text) {
+  const kind = v15BusSearchArmed ? "bus" : "places";
+  v15fixRemember(kind, text);
+};
+
+const v15fixRenderSearchResultsBase = renderSearchResults;
+renderSearchResults = function() {
+  const input = el("search-input"), resultsNode = el("search-results"), clearButton = el("search-clear");
+  if (!input || !resultsNode) return;
+  const query = input.value.trim();
+  if (query) return v15fixRenderSearchResultsBase();
+  clearButton?.classList.add("hidden");
+  universalSearchState = { query:"", loading:false, results:[], error:"" };
+  const kind = v15BusSearchArmed ? "bus" : "places";
+  const history = v15fixGetHistory(kind);
+  const label = kind === "bus" ? "RECENT BUS SEARCHES" : `RECENT ${String(CITY_CONFIG[currentCityId]?.name || "CITY").toUpperCase()} SEARCHES`;
+  if (!history.length) { hideSearchResults(); return; }
+  resultsNode.innerHTML = v15fixRecentHeader(kind, label) + history.map((item,index)=>`
+    <button class="search-result recent-search-result" data-v15fix-recent="${index}" role="option">
+      <div class="result-icon">↺</div><div><div class="result-title">${escapeHtml(item)}</div><div class="result-sub">Search again</div></div>
+    </button>`).join("");
+  resultsNode.classList.remove("hidden");
+  resultsNode.querySelectorAll("[data-v15fix-recent]").forEach(button => button.addEventListener("click",()=>{
+    input.value = history[Number(button.dataset.v15fixRecent)] || "";
+    if (kind === "bus") {
+      const value=input.value; v15fixRemember("bus",value); v15BusSearchArmed=false; v15LookupBus(value);
+    } else renderSearchResults();
+  }));
+  v15fixBindClearHistory(resultsNode, kind, renderSearchResults);
+};
+
+/* Remember bus queries independently from normal map/place searches. */
+const v15fixLookupBusBase = v15LookupBus;
+v15LookupBus = async function(ref) {
+  const clean = v15BusRefFromQuery(ref) || String(ref || "").trim();
+  if (clean) v15fixRemember("bus", clean);
+  return v15fixLookupBusBase(ref);
+};
+
+/* Route From / To each have their own history. */
+function v15fixEndpointHistoryKind(endpoint) { return endpoint === "origin" ? "route-from" : "route-to"; }
+function v15fixShowEndpointHistory(endpoint) {
+  const node=v15EndpointResultsNode(endpoint), input=v15EndpointInput(endpoint); if(!node||!input||input.value.trim())return;
+  const kind=v15fixEndpointHistoryKind(endpoint), history=v15fixGetHistory(kind);
+  if(!history.length){node.classList.add("hidden");return;}
+  node.innerHTML=v15fixRecentHeader(kind, endpoint === "origin" ? "RECENT FROM SEARCHES" : "RECENT TO SEARCHES") + history.map((x,i)=>`
+    <button class="nav-endpoint-result" data-v15fix-endpoint-history="${i}"><span class="nav-endpoint-result-icon">↺</span><span><b>${escapeHtml(x)}</b><small>Search again</small></span></button>`).join("");
+  node.classList.remove("hidden");
+  node.querySelectorAll("[data-v15fix-endpoint-history]").forEach(btn=>btn.addEventListener("click",()=>{input.value=history[Number(btn.dataset.v15fixEndpointHistory)]||"";v15EndpointSearch(endpoint,input.value);}));
+  v15fixBindClearHistory(node,kind,()=>v15fixShowEndpointHistory(endpoint));
+}
+const v15fixSetEndpointBase = v15SetEndpoint;
+v15SetEndpoint = function(endpoint, place) {
+  const name=String(place?.name||place?.address||"").trim();
+  if(name && !/^(current location|map centre)$/i.test(name)) v15fixRemember(v15fixEndpointHistoryKind(endpoint),name);
+  return v15fixSetEndpointBase(endpoint,place);
+};
+["origin","destination"].forEach(endpoint=>{
+  const input=v15EndpointInput(endpoint); if(!input)return;
+  input.addEventListener("focus",()=>{ if(!input.value.trim())v15fixShowEndpointHistory(endpoint); });
+  input.addEventListener("input",()=>{ if(!input.value.trim())v15fixShowEndpointHistory(endpoint); });
+});
+
+/* Add-place location search gets a separate history too. */
+function v15fixEnsureLocationHistoryBox(){
+  const input=el("location-search-input"); if(!input)return null;
+  let box=el("v15fix-location-history"); if(box)return box;
+  box=document.createElement("div"); box.id="v15fix-location-history"; box.className="navigation-endpoint-results location-history-results hidden";
+  input.closest(".inline-search")?.insertAdjacentElement("afterend",box); return box;
+}
+function v15fixRenderLocationHistory(){
+  const input=el("location-search-input"), box=v15fixEnsureLocationHistoryBox(); if(!input||!box||input.value.trim()){box?.classList.add("hidden");return;}
+  const history=v15fixGetHistory("add-place"); if(!history.length){box.classList.add("hidden");return;}
+  box.innerHTML=v15fixRecentHeader("add-place","RECENT LOCATION SEARCHES")+history.map((x,i)=>`<button class="nav-endpoint-result" data-v15fix-location-history="${i}"><span class="nav-endpoint-result-icon">↺</span><span><b>${escapeHtml(x)}</b><small>Search again</small></span></button>`).join("");
+  box.classList.remove("hidden"); box.querySelectorAll("[data-v15fix-location-history]").forEach(btn=>btn.addEventListener("click",()=>{input.value=history[Number(btn.dataset.v15fixLocationHistory)]||"";box.classList.add("hidden");geocodeLocationForPlace();}));
+  v15fixBindClearHistory(box,"add-place",v15fixRenderLocationHistory);
+}
+const v15fixGeocodeLocationBase = geocodeLocationForPlace;
+geocodeLocationForPlace = async function(){ const q=el("location-search-input")?.value?.trim(); if(q)v15fixRemember("add-place",q); return v15fixGeocodeLocationBase(); };
+el("location-search-input")?.addEventListener("focus",v15fixRenderLocationHistory);
+el("location-search-input")?.addEventListener("input",()=>{if(!el("location-search-input")?.value?.trim())v15fixRenderLocationHistory();});
+
+/* More road-accurate long-distance routes: use detailed Directions steps, not only overview geometry. */
+function v15fixDetailedStepPath(step){
+  const own=(step?.path||[]).map(v15LatLngPoint).filter(Boolean); if(own.length>1)return own;
+  const nested=[]; for(const child of step?.steps||[]){const p=v15fixDetailedStepPath(child);if(p.length){if(nested.length&&Math.abs(nested[nested.length-1].lat-p[0].lat)<1e-7&&Math.abs(nested[nested.length-1].lng-p[0].lng)<1e-7)nested.push(...p.slice(1));else nested.push(...p);}}
+  return nested;
+}
+v14eRoutePath = function(route){
+  const detailed=[];
+  for(const leg of route?.legs||[])for(const step of leg.steps||[]){const p=v15fixDetailedStepPath(step);if(!p.length)continue;if(detailed.length&&Math.abs(detailed[detailed.length-1].lat-p[0].lat)<1e-7&&Math.abs(detailed[detailed.length-1].lng-p[0].lng)<1e-7)detailed.push(...p.slice(1));else detailed.push(...p);}
+  if(detailed.length>2)return detailed;
+  const raw=route?.overview_path||route?.overviewPath||[];return raw.map(v15LatLngPoint).filter(Boolean);
+};
+
+/* Continent-scale map access even after map reconfiguration. */
+function v15fixEnableWorldZoom(){ try{map?.setOptions?.({minZoom:2,maxZoom:21});}catch{} }
+setTimeout(v15fixEnableWorldZoom,0);
+const v15fixUpdateCityUIBase = updateV14CityUI;
+updateV14CityUI = function(){ const r=v15fixUpdateCityUIBase(); document.title="Everything App by Kağan"; setTimeout(v15fixEnableWorldZoom,0); return r; };
+document.title="Everything App by Kağan";
+
+/* ---------- Fastest mode: compare ground / transit / walking + estimated air ---------- */
+function v15fixKm(a,b){
+  const R=6371, p1=Number(a.lat)*Math.PI/180,p2=Number(b.lat)*Math.PI/180,dp=(Number(b.lat)-Number(a.lat))*Math.PI/180,dl=(Number(b.lng)-Number(a.lng))*Math.PI/180;
+  const x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+function v15fixArcPath(a,b){
+  const km=v15fixKm(a,b), bulge=Math.min(13,Math.max(1.2,km/520)); const pts=[];
+  for(let i=0;i<=64;i++){const t=i/64,e=Math.sin(Math.PI*t);pts.push({lat:a.lat+(b.lat-a.lat)*t+bulge*e,lng:a.lng+(b.lng-a.lng)*t});} return pts;
+}
+function v15fixClosestAirportPairs(origin,destination){
+  const oc=inferCityIdFromCoords(origin.lat,origin.lng), dc=inferCityIdFromCoords(destination.lat,destination.lng); if(oc===dc||v15fixKm(origin,destination)<180)return [];
+  const A=(V15_AIRPORTS[oc]||[]).map(x=>({...x,city:oc})),B=(V15_AIRPORTS[dc]||[]).map(x=>({...x,city:dc}));
+  const pairs=[];for(const a of A)for(const b of B){const air=v15fixKm(a,b);const ground=v15fixKm(origin,a)+v15fixKm(b,destination);const rough=ground/55+air/800+2.1;pairs.push({a,b,air,rough});}
+  return pairs.sort((x,y)=>x.rough-y.rough).slice(0,2);
+}
+async function v15fixDriveBetween(origin,destination){
+  try{const {TravelMode,TrafficModel}=await google.maps.importLibrary("routes");const list=await v14eDirectionsRequest({origin,destination,travelMode:TravelMode?.DRIVING||google.maps.TravelMode.DRIVING,provideRouteAlternatives:false,drivingOptions:{departureTime:new Date(),trafficModel:TrafficModel?.BEST_GUESS||google.maps.TrafficModel?.BEST_GUESS}},"Airport transfer");return list[0]||null;}catch{return null;}
+}
+async function v15fixAirCandidates(){
+  const origin=v14eNavigation.origin,destination=v14eNavigation.destination,pairs=v15fixClosestAirportPairs(origin,destination),out=[];
+  for(const pair of pairs){
+    const [g1,g2]=await Promise.all([v15fixDriveBetween(origin,{lat:pair.a.lat,lng:pair.a.lng}),v15fixDriveBetween({lat:pair.b.lat,lng:pair.b.lng},destination)]);
+    const g1Sec=g1?.duration||Math.max(600,v15fixKm(origin,pair.a)/45*3600),g2Sec=g2?.duration||Math.max(600,v15fixKm(pair.b,destination)/45*3600);
+    const airSec=2.1*3600+(pair.air/800)*3600; const duration=g1Sec+airSec+g2Sec;
+    out.push({fastestMode:"air",estimated:true,duration,distance:(g1?.distance||v15fixKm(origin,pair.a)*1000)+pair.air*1000+(g2?.distance||v15fixKm(pair.b,destination)*1000),summary:`✈ ${pair.a.iata} → ${pair.b.iata}`,source:`Estimated air option · schedules not checked`,transfers:0,walk:0,path:[],air:{from:pair.a,to:pair.b,arc:v15fixArcPath(pair.a,pair.b),originGround:g1,destinationGround:g2}});
+  }
+  return out;
+}
+const v15fixBuildCandidatesBase=v14eBuildCandidates;
+v14eBuildCandidates=async function(mode){
+  if(mode!=="fastest")return v15fixBuildCandidatesBase(mode);
+  const straight=v15fixKm(v14eNavigation.origin,v14eNavigation.destination); const jobs=[v15fixBuildCandidatesBase("drive"),v15fixBuildCandidatesBase("transit")]; if(straight<35)jobs.push(v15fixBuildCandidatesBase("walk")); jobs.push(v15fixAirCandidates());
+  const settled=await Promise.allSettled(jobs),all=[];settled.forEach((x,idx)=>{if(x.status!=="fulfilled")return;for(const c of x.value||[]){if(c.fastestMode){all.push(c);continue;}const modeName=idx===0?"drive":idx===1?"transit":"walk";all.push({...c,fastestMode:modeName});}});
+  return all.filter(c=>Number.isFinite(c.duration)&&c.duration>0).sort((a,b)=>a.duration-b.duration||a.distance-b.distance).slice(0,10);
+};
+
+let v15fixAirOverlays=[];
+function v15fixClearAirOverlays(){v15fixAirOverlays.forEach(x=>x.setMap?.(null));v15fixAirOverlays=[];}
+function v15fixEnsurePlaneRouteOverlay(){if(window.__V15FixPlaneRouteOverlay)return;window.__V15FixPlaneRouteOverlay=class extends google.maps.OverlayView{constructor(position,label){super();this.position=position;this.label=label;this.div=null;}onAdd(){const d=document.createElement("div");d.className="plane-route-marker";d.innerHTML=`${v15PlaneSvg()}<span>${escapeHtml(this.label)}</span>`;this.div=d;this.getPanes().overlayMouseTarget.appendChild(d);}draw(){if(!this.div)return;const p=this.getProjection().fromLatLngToDivPixel(new google.maps.LatLng(this.position));if(!p)return;this.div.style.left=`${p.x}px`;this.div.style.top=`${p.y}px`;}onRemove(){this.div?.remove();this.div=null;}};}
+const v15fixClearNavBase=v14eClearNavPolylines;
+v14eClearNavPolylines=function(){v15fixClearAirOverlays();return v15fixClearNavBase();};
+function v15fixDrawStandardCandidate(c,mode,bounds){
+  if(mode==="transit"&&c.transitSegments?.length){v15EnsureNavLabelClass();for(const seg of c.transitSegments){seg.path.forEach(p=>bounds.extend(p));const halo=new google.maps.Polyline({map,path:seg.path,strokeColor:"#06101A",strokeOpacity:.92,strokeWeight:seg.kind==="walk"?7:10,zIndex:95,clickable:false});const main=new google.maps.Polyline({map,path:seg.path,strokeColor:seg.color,strokeOpacity:1,strokeWeight:seg.kind==="walk"?3.5:5.5,zIndex:96,clickable:false,icons:seg.kind==="walk"?[{icon:{path:"M 0,-1 0,1",strokeOpacity:1,scale:2},offset:"0",repeat:"12px"}]:undefined});v14eNavPolylines.push(halo,main);const mid=v15SegmentMidpoint(seg.path);if(mid){const label=new window.__V15NavSegmentLabel(mid,seg);label.setMap(map);v15NavLabels.push(label);}}v15RenderSegmentLegend(c.transitSegments);return;}
+  const color=mode==="walk"?"#F7F9FC":mode==="taxi"?"#FFD05A":mode==="drive"?"#5BA8FF":"#77B7FF";const halo=new google.maps.Polyline({map,path:c.path,strokeColor:"#07101B",strokeOpacity:.9,strokeWeight:10,zIndex:95,clickable:false});const main=new google.maps.Polyline({map,path:c.path,strokeColor:color,strokeOpacity:1,strokeWeight:5.5,zIndex:96,clickable:false});v14eNavPolylines.push(halo,main);c.path.forEach(p=>bounds.extend(p));
+}
+function v15fixDrawAirCandidate(c,bounds){
+  const air=c.air;if(!air)return;const ground=[air.originGround,air.destinationGround].filter(Boolean);for(const g of ground){if(!g.path?.length)continue;g.path.forEach(p=>bounds.extend(p));const h=new google.maps.Polyline({map,path:g.path,strokeColor:"#07101B",strokeOpacity:.88,strokeWeight:8,zIndex:94});const m=new google.maps.Polyline({map,path:g.path,strokeColor:"#5BA8FF",strokeOpacity:1,strokeWeight:4,zIndex:95});v14eNavPolylines.push(h,m);}
+  air.arc.forEach(p=>bounds.extend(p));const dotted=new google.maps.Polyline({map,path:air.arc,strokeOpacity:0,zIndex:97,geodesic:false,icons:[{icon:{path:google.maps.SymbolPath.CIRCLE,scale:2.1,fillColor:"#FFFFFF",fillOpacity:.95,strokeOpacity:0},offset:"0",repeat:"16px"}]});v14eNavPolylines.push(dotted);v15fixEnsurePlaneRouteOverlay();const mid=air.arc[Math.floor(air.arc.length/2)];const plane=new window.__V15FixPlaneRouteOverlay(mid,`${air.from.iata} → ${air.to.iata}`);plane.setMap(map);v15fixAirOverlays.push(plane);v15RenderSegmentLegend([{icon:"🚗",color:"#5BA8FF",service:"Airport transfer",kind:"drive"},{icon:"✈",color:"#FFFFFF",service:`${air.from.iata} → ${air.to.iata}`,kind:"air"},{icon:"🚗",color:"#5BA8FF",service:"Airport transfer",kind:"drive"}]);
+}
+const v15fixDrawCandidateBase=v14eDrawCandidate;
+v14eDrawCandidate=function(index){
+  if(v14eNavigation.mode!=="fastest")return v15fixDrawCandidateBase(index);
+  v14eClearNavPolylines();const c=v14eNavigation.candidates[index];if(!c)return;v14eNavigation.selectedIndex=index;const bounds=new google.maps.LatLngBounds();if(c.fastestMode==="air")v15fixDrawAirCandidate(c,bounds);else v15fixDrawStandardCandidate(c,c.fastestMode,bounds);if(!bounds.isEmpty())map.fitBounds(bounds,60);document.querySelectorAll(".navigation-result").forEach((n,i)=>n.classList.toggle("active",i===index));
+};
+const v15fixRenderNavBase=v14eRenderNavigationResults;
+v14eRenderNavigationResults=function(){
+  if(v14eNavigation.mode!=="fastest")return v15fixRenderNavBase();const node=el("navigation-results");if(!v14eNavigation.candidates.length){node.innerHTML=`<div class="empty-state">No multimodal options were returned.</div>`;return;}
+  const icons={drive:"🚗",transit:"🚇",walk:"🚶",air:"✈"},names={drive:"Car",transit:"Public transport",walk:"Walk",air:"Air + ground"};
+  node.innerHTML=v14eNavigation.candidates.map((c,i)=>{const air=c.fastestMode==="air";const note=air?`${c.source} · ${c.air?.from?.name||c.air?.from?.iata} → ${c.air?.to?.name||c.air?.to?.iata}`:(c.fastestMode==="transit"?`${c.transfers} transfer${c.transfers===1?"":"s"}${c.walk?` · ${v14eFormatDistance(c.walk)} walk`:""}`:c.source||names[c.fastestMode]);return `<button class="navigation-result ${i===0?"active":""}" data-nav-route="${i}"><span class="navigation-rank">${i+1}</span><span class="navigation-result-main"><b>${i===0?"Fastest · ":""}${icons[c.fastestMode]||"◆"} ${escapeHtml(names[c.fastestMode]||"Route")} ${air?`· ${escapeHtml(c.air.from.iata)} → ${escapeHtml(c.air.to.iata)}`:""}</b><small>${escapeHtml(note||"")}</small></span><span class="navigation-result-time"><b>${air?"≈ ":""}${v14eFormatDuration(c.duration)}</b><small>${v14eFormatDistance(c.distance)}</small></span></button>`;}).join("");node.querySelectorAll("[data-nav-route]").forEach(btn=>btn.addEventListener("click",()=>v14eDrawCandidate(Number(btn.dataset.navRoute))));v14eDrawCandidate(0);
+};
+const v15fixCalculateNavBase=v14eCalculateNavigation;
+v14eCalculateNavigation=async function(mode){
+  if(mode!=="fastest")return v15fixCalculateNavBase(mode);v14eNavigation.mode="fastest";document.querySelectorAll("[data-nav-mode]").forEach(b=>b.classList.toggle("active",b.dataset.navMode==="fastest"));el("navigation-status").textContent="Comparing every practical mode, including estimated air travel…";el("navigation-results").innerHTML=`<div class="navigation-loading">Comparing car, public transport, walking and air options…</div>`;el("navigation-taxi-ranks")?.classList.add("hidden");
+  try{v14eNavigation.candidates=await v14eBuildCandidates("fastest");el("navigation-status").textContent=`${v14eNavigation.candidates.length} fastest option${v14eNavigation.candidates.length===1?"":"s"}, ordered by estimated door-to-door time. Air options are estimates because no flight API is connected.`;v14eRenderNavigationResults();}catch(err){console.warn("Fastest mode unavailable",err);el("navigation-results").innerHTML="";el("navigation-status").textContent="Could not compare all modes right now.";showToast("Fastest comparison is temporarily unavailable.",3200);}
+};
+
+console.info(`Everything App by Kağan ${V15FIX_VERSION} loaded`);
