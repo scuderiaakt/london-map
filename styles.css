@@ -1651,3 +1651,30 @@ body.city-flight-active .city-choice { opacity: .62; }
 @media (max-width: 720px) {
   .rome-municipio-label { transform: translate(-50%, -50%) scale(.88); }
 }
+
+
+/* ---------- v1.4B.1 hotfix ---------- */
+.place-marker.important .place-pin {
+  width: 25px;
+  height: 25px;
+  box-shadow: 0 0 0 6px rgba(255,255,255,.08), 0 5px 18px rgba(0,0,0,.5);
+}
+.favorite-important-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 0 4px;
+  padding: 11px 12px;
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 12px;
+  background: rgba(255,255,255,.045);
+  cursor: pointer;
+}
+.favorite-important-row input { margin-top: 3px; accent-color: #79b6ff; }
+.favorite-important-row span { display: grid; gap: 3px; }
+.favorite-important-row b { font-size: 12px; }
+.favorite-important-row small { color: #8293a8; font-size: 10px; line-height: 1.35; }
+.panel-search-box:focus-within #search-clear { display: grid !important; }
+
+/* v1.4C walk route editor */
+.walk-segment-card{gap:10px}.walk-endpoint-block{padding:10px;border:1px solid rgba(255,255,255,.10);border-radius:12px;background:rgba(255,255,255,.035)}.walk-endpoint-title{font-size:10px;letter-spacing:.16em;color:var(--muted);font-weight:800;margin-bottom:7px}.walk-pick-actions{display:flex;gap:7px;margin-top:7px;flex-wrap:wrap}.tiny-route-btn{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:var(--text);border-radius:9px;padding:7px 9px;font-size:11px;font-weight:700;cursor:pointer}.tiny-route-btn:hover{background:rgba(255,255,255,.10)}.walk-direction-arrow{text-align:center;color:var(--muted);font-weight:900;line-height:1}

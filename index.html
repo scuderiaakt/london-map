@@ -10,7 +10,7 @@
   <title>Our Cities Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.4b" />
+  <link rel="stylesheet" href="styles.css?v=1.4c" />
 </head>
 <body>
   <main id="app">
@@ -195,6 +195,10 @@
       </select>
       <label class="field-label" for="place-note-input">Note</label>
       <input id="place-note-input" class="form-control" type="text" placeholder="Optional note" />
+      <label class="favorite-important-row" for="place-important-input">
+        <input id="place-important-input" type="checkbox" />
+        <span><b>Important favorite</b><small>Show a larger marker and keep its name visible on the map.</small></span>
+      </label>
       <div class="coordinate-readout">Location: <span id="place-coordinate-readout"></span></div>
       <button id="save-place-btn" class="primary-btn full-btn">Save frequent place</button>
     </section>
@@ -274,6 +278,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.4b"></script>
+  <script src="app.js?v=1.4c"></script>
 </body>
 </html>

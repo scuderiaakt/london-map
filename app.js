@@ -1,4 +1,4 @@
-/* Our Cities Map v1.4B
+/* Our Cities Map v1.4B.1
    Google Maps basemap + geographic London Underground overlay.
    v1.3D adds Rail + Tram, transport focus, richer information panels and route-building hooks,
    while preserving persistent favorites, geographic Metro and the mobile-first interface.
@@ -249,15 +249,17 @@ function initOverlayClasses() {
 
   PlaceOverlay = class PlaceOverlay extends HtmlOverlay {
     constructor(place) {
-      super({ lat: place.lat, lng: place.lng }, `place-marker ${place.anchor ? "anchor" : ""}`);
+      const emphasized = !!(place.anchor || place.important);
+      super({ lat: place.lat, lng: place.lng }, `place-marker ${place.anchor ? "anchor" : ""} ${place.important ? "important" : ""}`);
       this.place = place;
+      this.emphasized = emphasized;
     }
 
     onAdd() {
       super.onAdd();
       this.div.innerHTML = `
         <div class="place-pin" style="background:${this.place.color}"></div>
-        ${this.place.anchor ? `<div class="place-label">${escapeHtml(this.place.name)}</div>` : ""}
+        ${this.emphasized ? `<div class="place-label">${escapeHtml(this.place.name)}</div>` : ""}
       `;
       this.div.title = this.place.name;
       this.div.addEventListener("click", event => {
@@ -3816,6 +3818,8 @@ function openPlaceEditor(coords, suggestedName = "", suggestedNote = "", suggest
   const category = canonicalFavoriteCategory(suggestedCategory, suggestedName);
   el("place-category-input").value = category;
   el("place-note-input").value = suggestedNote || "";
+  const existingPlace = editingFrequentPlaceId ? frequentPlaces.find(item => item.id === editingFrequentPlaceId) : null;
+  if (el("place-important-input")) el("place-important-input").checked = !!(existingPlace?.important || existingPlace?.anchor);
   el("place-coordinate-readout").textContent = `${pendingPlaceCoordinates.lat.toFixed(5)}, ${pendingPlaceCoordinates.lng.toFixed(5)}`;
   const heading = el("place-editor-sheet")?.querySelector("h2");
   if (heading) heading.textContent = editingFrequentPlaceId ? "Edit favorite place" : "Save this place";
@@ -3844,16 +3848,17 @@ function savePlaceFromEditor() {
   if (!name || !pendingPlaceCoordinates) { showToast("Give the place a name first."); return; }
   const category = canonicalFavoriteCategory(el("place-category-input").value || "Other", name);
   const note = el("place-note-input").value.trim();
+  const important = !!el("place-important-input")?.checked;
   let place;
   if (editingFrequentPlaceId) {
     const index = frequentPlaces.findIndex(item => item.id === editingFrequentPlaceId);
     if (index >= 0) {
-      place = { ...frequentPlaces[index], city: frequentPlaces[index].city || currentCityId, name, lat: pendingPlaceCoordinates.lat, lng: pendingPlaceCoordinates.lng, category, color: placeColorForCategory(category), note, updatedAt: Date.now() };
+      place = { ...frequentPlaces[index], city: frequentPlaces[index].city || currentCityId, name, lat: pendingPlaceCoordinates.lat, lng: pendingPlaceCoordinates.lng, category, color: placeColorForCategory(category), note, important, updatedAt: Date.now() };
       frequentPlaces[index] = place;
     }
   }
   if (!place) {
-    place = { id: `place-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, city: currentCityId, name, lat: pendingPlaceCoordinates.lat, lng: pendingPlaceCoordinates.lng, category, color: placeColorForCategory(category), anchor: false, note, createdAt: Date.now() };
+    place = { id: `place-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, city: currentCityId, name, lat: pendingPlaceCoordinates.lat, lng: pendingPlaceCoordinates.lng, category, color: placeColorForCategory(category), anchor: false, important, note, createdAt: Date.now() };
     frequentPlaces.push(place);
   }
   saveFrequentPlaces();
@@ -3881,7 +3886,7 @@ function showPlaceInfo(place) {
     <h2>${escapeHtml(place.name)}</h2>
     <div class="sub">${escapeHtml(place.note || "Favorite place")}</div>
     ${profile ? `<div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(profile.about)}</p></div><div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>${escapeHtml(profile.background)}</p></div>` : ""}
-    <div class="detail-section"><div class="info-row"><span>Category</span><b>${escapeHtml(category)}</b></div><div class="info-row"><span>Coordinates</span><b>${Number(place.lat).toFixed(5)}, ${Number(place.lng).toFixed(5)}</b></div></div>
+    <div class="detail-section"><div class="info-row"><span>Category</span><b>${escapeHtml(category)}</b></div><div class="info-row"><span>Map label</span><b>${place.anchor || place.important ? "Important · always named" : "Standard"}</b></div><div class="info-row"><span>Coordinates</span><b>${Number(place.lat).toFixed(5)}, ${Number(place.lng).toFixed(5)}</b></div></div>
     <div class="detail-actions place-action-row"><button class="mini-edit-btn" id="edit-place-btn">Edit</button><button class="mini-danger-soft" id="delete-place-btn">Delete</button></div>`;
   content.querySelector("#edit-place-btn")?.addEventListener("click", () => openPlaceEditorForEdit(place));
   content.querySelector("#delete-place-btn")?.addEventListener("click", () => deleteFrequentPlace(place.id));
@@ -5479,13 +5484,13 @@ function arcGisFeaturePoint(feature) {
   return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
 }
 
-async function fetchRomeArcGisGeoJson(layerUrl, options = {}) {
+function buildRomeArcGisParams(options = {}, format = "geojson") {
   const params = new URLSearchParams({
     where: options.where || "1=1",
     outFields: options.outFields || "*",
     returnGeometry: options.returnGeometry === false ? "false" : "true",
     outSR: "4326",
-    f: "geojson"
+    f: format
   });
   if (options.geometry) {
     params.set("geometry", options.geometry);
@@ -5495,10 +5500,70 @@ async function fetchRomeArcGisGeoJson(layerUrl, options = {}) {
   }
   if (Number.isFinite(options.resultOffset)) params.set("resultOffset", String(options.resultOffset));
   if (Number.isFinite(options.resultRecordCount)) params.set("resultRecordCount", String(options.resultRecordCount));
+  return params;
+}
+
+function esriJsonToGeoJson(data) {
+  if (!data || !Array.isArray(data.features)) return data;
+  return {
+    type: "FeatureCollection",
+    features: data.features.map(feature => {
+      const geometry = feature.geometry || {};
+      let geo = null;
+      if (Number.isFinite(geometry.x) && Number.isFinite(geometry.y)) {
+        geo = { type: "Point", coordinates: [Number(geometry.x), Number(geometry.y)] };
+      } else if (Array.isArray(geometry.paths)) {
+        geo = geometry.paths.length === 1
+          ? { type: "LineString", coordinates: geometry.paths[0] }
+          : { type: "MultiLineString", coordinates: geometry.paths };
+      } else if (Array.isArray(geometry.rings)) {
+        geo = { type: "Polygon", coordinates: geometry.rings };
+      }
+      return { type: "Feature", properties: feature.attributes || {}, geometry: geo };
+    }).filter(feature => feature.geometry)
+  };
+}
+
+function fetchRomeArcGisJsonp(layerUrl, options = {}) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `__romeArcGis_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const params = buildRomeArcGisParams(options, "json");
+    params.set("callback", callbackName);
+    const script = document.createElement("script");
+    const timeout = setTimeout(() => cleanup(new Error("Rome ArcGIS JSONP timed out")), 14000);
+    const cleanup = error => {
+      clearTimeout(timeout);
+      script.remove();
+      try { delete window[callbackName]; } catch { window[callbackName] = undefined; }
+      if (error) reject(error);
+    };
+    window[callbackName] = payload => {
+      if (payload?.error) { cleanup(new Error(payload.error.message || "Rome ArcGIS returned an error")); return; }
+      const normalized = esriJsonToGeoJson(payload);
+      clearTimeout(timeout);
+      script.remove();
+      try { delete window[callbackName]; } catch { window[callbackName] = undefined; }
+      resolve(normalized);
+    };
+    script.onerror = () => cleanup(new Error("Rome ArcGIS JSONP script failed"));
+    script.src = `${layerUrl}/query?${params.toString()}`;
+    document.head.appendChild(script);
+  });
+}
+
+async function fetchRomeArcGisGeoJson(layerUrl, options = {}) {
+  const params = buildRomeArcGisParams(options, "geojson");
   const url = `${layerUrl}/query?${params.toString()}`;
-  const response = await fetch(url, { headers: { Accept: "application/geo+json,application/json" } });
-  if (!response.ok) throw new Error(`Rome open-data request returned ${response.status}`);
-  return response.json();
+  try {
+    const response = await fetch(url, { headers: { Accept: "application/geo+json,application/json" } });
+    if (!response.ok) throw new Error(`Rome open-data request returned ${response.status}`);
+    const data = await response.json();
+    if (data?.error) throw new Error(data.error.message || "Rome open-data query failed");
+    return data;
+  } catch (error) {
+    console.warn("Direct Rome ArcGIS request failed; retrying with JSONP fallback.", error);
+    return fetchRomeArcGisJsonp(layerUrl, options);
+  }
 }
 
 async function fetchRomePagedStops(envelope) {
@@ -5644,10 +5709,10 @@ async function ensureRomeCore(force = false) {
     setNetworkStatus("Rome transport ready");
     refreshSearchIfOpen();
   })().catch(err => {
-    console.error("Rome core load failed", err);
-    setNetworkStatus("Rome transport data unavailable", true);
-    showToast("Rome Metro/Rail open data could not load. Try Refresh transport data.", 4200);
-    throw err;
+    console.error("Rome core load failed after direct + JSONP attempts", err);
+    setNetworkStatus("Rome transport could not load · tap Refresh in Settings", true);
+    showToast("Rome transport could not load. The app tried both direct and CORS-safe fallback access; use Refresh transport data to retry.", 5200);
+    return null;
   }).finally(() => { romeCorePromise = null; });
   return romeCorePromise;
 }
@@ -6240,3 +6305,412 @@ if (storedKey) {
 } else {
   showModal("key-modal");
 }
+
+
+/* ---------- v1.4B.1 usability hotfix ---------- */
+function collapsePanelSearch() {
+  const input = el("search-input");
+  if (input) input.value = "";
+  universalSearchState = { query: "", loading: false, results: [], error: "" };
+  hideSearchResults();
+  input?.blur();
+  el("search-clear")?.classList.add("hidden");
+}
+
+el("search-clear")?.addEventListener("click", event => {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  collapsePanelSearch();
+}, true);
+
+el("search-input")?.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    collapsePanelSearch();
+  }
+}, true);
+
+document.addEventListener("pointerdown", event => {
+  const box = event.target.closest?.(".panel-search-box");
+  const results = el("search-results");
+  if (!box && results && !results.classList.contains("hidden")) hideSearchResults();
+}, true);
+
+/* ======================================================================
+   v1.4C — Rome reliability + precise favorite routes + walk endpoints
+   ====================================================================== */
+
+const V14C_VERSION = "1.4C";
+let v14cWalkPick = null;
+let v14cRomeStaticFallback = false;
+let v14cMapPickListenerInstalled = false;
+
+/* ---------- Rome: robust transport loading ---------- */
+
+const v14cFetchRomeArcGisBase = fetchRomeArcGisGeoJson;
+
+async function v14cFetchJson(url, timeoutMs = 14000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (data?.error) throw new Error(data.error.message || "Remote service error");
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function v14cFetchRomeThroughProxy(layerUrl, options = {}) {
+  const params = buildRomeArcGisParams(options, "json");
+  const target = `${layerUrl}/query?${params.toString()}`;
+  const proxies = [
+    `https://corsproxy.io/?url=${encodeURIComponent(target)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`
+  ];
+  let lastError = null;
+  for (const proxyUrl of proxies) {
+    try {
+      const payload = await v14cFetchJson(proxyUrl, 16000);
+      const normalized = esriJsonToGeoJson(payload);
+      if (Array.isArray(normalized?.features)) return normalized;
+      throw new Error("Proxy returned no features");
+    } catch (error) {
+      lastError = error;
+      console.warn("Rome proxy fallback failed", proxyUrl, error);
+    }
+  }
+  throw lastError || new Error("Rome proxy fallbacks failed");
+}
+
+fetchRomeArcGisGeoJson = async function(layerUrl, options = {}) {
+  try {
+    const data = await v14cFetchRomeArcGisBase(layerUrl, options);
+    if (Array.isArray(data?.features)) return data;
+    throw new Error("Rome service returned no features");
+  } catch (error) {
+    console.warn("Rome direct/JSONP access unavailable; trying CORS proxy fallbacks.", error);
+    return v14cFetchRomeThroughProxy(layerUrl, options);
+  }
+};
+
+function v14cLineFeature(name, coords) {
+  return { type: "Feature", properties: { NOMELINEA: name, PERCORSO: name }, geometry: { type: "LineString", coordinates: coords.map(p => [p[1], p[0]]) } };
+}
+function v14cPointFeature(line, name, lat, lng) {
+  return { type: "Feature", properties: { NOMELINEA: line, NOME: name, IMPIANTO: name }, geometry: { type: "Point", coordinates: [lng, lat] } };
+}
+
+/* Bundled fallback is intentionally compact. It keeps Rome usable if the official GIS
+   endpoint or public CORS bridges are unavailable. Exact live/open-data geometry is
+   still preferred whenever it can be reached. */
+function v14cRomeStaticCoreBundle() {
+  const A = [
+    [41.9064,12.4144,"Battistini"],[41.9094,12.4580,"Ottaviano"],[41.9119,12.4763,"Flaminio"],[41.9068,12.4828,"Spagna"],[41.9031,12.4888,"Barberini"],[41.9023,12.4957,"Repubblica"],[41.9010,12.5018,"Termini"],[41.8948,12.5049,"Vittorio Emanuele"],[41.8853,12.5090,"San Giovanni"],[41.8816,12.5140,"Re di Roma"],[41.8779,12.5181,"Ponte Lungo"],[41.8747,12.5237,"Furio Camillo"],[41.8709,12.5294,"Colli Albani"],[41.8665,12.5357,"Arco di Travertino"],[41.8638,12.5484,"Porta Furba"],[41.8624,12.5525,"Numidio Quadrato"],[41.8598,12.5572,"Lucio Sestio"],[41.8566,12.5627,"Giulio Agricola"],[41.8539,12.5677,"Subaugusta"],[41.8494,12.5740,"Cinecittà"],[41.8429,12.5861,"Anagnina"]
+  ];
+  const B = [
+    [41.8270,12.4810,"Laurentina"],[41.8287,12.4708,"EUR Fermi"],[41.8302,12.4662,"EUR Palasport"],[41.8396,12.4637,"EUR Magliana"],[41.8560,12.4770,"Marconi"],[41.8563,12.4787,"Basilica San Paolo"],[41.8663,12.4832,"Garbatella"],[41.8756,12.4823,"Piramide"],[41.8830,12.4884,"Circo Massimo"],[41.8913,12.4918,"Colosseo / Fori Imperiali"],[41.8958,12.4931,"Cavour"],[41.9010,12.5018,"Termini"],[41.9062,12.5055,"Castro Pretorio"],[41.9080,12.5113,"Policlinico"],[41.9131,12.5202,"Bologna"],[41.9108,12.5308,"Tiburtina"],[41.9150,12.5381,"Quintiliani"],[41.9150,12.5470,"Monti Tiburtini"],[41.9146,12.5551,"Pietralata"],[41.9150,12.5603,"Santa Maria del Soccorso"],[41.9202,12.5657,"Ponte Mammolo"],[41.9257,12.5732,"Rebibbia"]
+  ];
+  const B1 = [
+    [41.9131,12.5202,"Bologna"],[41.9227,12.5158,"Sant'Agnese / Annibaliano"],[41.9322,12.5212,"Libia"],[41.9404,12.5185,"Conca d'Oro"],[41.9451,12.5270,"Jonio"]
+  ];
+  const C = [
+    [41.8650,12.7060,"Monte Compatri - Pantano"],[41.8648,12.6860,"Finocchio"],[41.8645,12.6655,"Borghesiana"],[41.8652,12.6493,"Bolognetta"],[41.8673,12.6302,"Grotte Celoni"],[41.8700,12.6165,"Torre Gaia"],[41.8725,12.5986,"Torre Angela"],[41.8770,12.5920,"Torrenova"],[41.8790,12.5830,"Giardinetti"],[41.8810,12.5725,"Torre Maura"],[41.8810,12.5645,"Torre Spaccata"],[41.8794,12.5577,"Alessandrino"],[41.8747,12.5503,"Parco di Centocelle"],[41.8812,12.5480,"Mirti"],[41.8870,12.5438,"Gardenie"],[41.8895,12.5365,"Teano"],[41.8875,12.5267,"Malatesta"],[41.8890,12.5155,"Pigneto"],[41.8853,12.5090,"San Giovanni"],[41.8899,12.5006,"Porta Metronia"],[41.8913,12.4918,"Colosseo / Fori Imperiali"]
+  ];
+  const metromare = [[41.8756,12.4823,"Porta San Paolo / Piramide"],[41.8396,12.4637,"EUR Magliana"],[41.7905,12.3660,"Acilia"],[41.7320,12.2800,"Lido Centro"],[41.7200,12.2870,"Cristoforo Colombo"]];
+  const viterbo = [[41.9119,12.4763,"Flaminio"],[41.9405,12.4690,"Acqua Acetosa"],[41.9600,12.4700,"Tor di Quinto"],[42.0060,12.4930,"Prima Porta"],[42.0750,12.4820,"Sacrofano"]];
+  const lineSets = [["METROA",A],["METROB",B],["METROB1",B1],["METROC",C],["ROMA-LIDO",metromare],["ROMA-VITERBO",viterbo]];
+  const linesGeo = { type:"FeatureCollection", features: lineSets.map(([name,pts]) => v14cLineFeature(name, pts.map(p => [p[0],p[1]]))) };
+  const metroStationsGeo = { type:"FeatureCollection", features: [["METROA",A],["METROB",B],["METROB1",B1],["METROC",C]].flatMap(([line,pts]) => pts.map(p => v14cPointFeature(line,p[2],p[0],p[1]))) };
+  const railStationsGeo = { type:"FeatureCollection", features: [["ROMA-LIDO",metromare],["ROMA-VITERBO",viterbo]].flatMap(([line,pts]) => pts.map(p => v14cPointFeature(line,p[2],p[0],p[1]))) };
+  return { linesGeo, metroStationsGeo, railStationsGeo };
+}
+
+function v14cInstallStaticRomeTrams() {
+  const rough = {
+    "2": [[41.9250,12.4660],[41.9180,12.4710],[41.9130,12.4760],[41.9090,12.4800]],
+    "3": [[41.8756,12.4823],[41.8830,12.4884],[41.8913,12.4918],[41.8950,12.5050],[41.8930,12.5160]],
+    "5": [[41.9010,12.5018],[41.8950,12.5150],[41.8890,12.5260],[41.8880,12.5410]],
+    "8": [[41.8890,12.4690],[41.8880,12.4780],[41.8895,12.4860],[41.8930,12.4770]],
+    "14": [[41.9010,12.5018],[41.8970,12.5160],[41.8920,12.5330],[41.8890,12.5480]],
+    "19": [[41.9140,12.4540],[41.9160,12.4720],[41.9140,12.4900],[41.9080,12.5100],[41.8990,12.5260]]
+  };
+  ROME_TRAM_LINES.forEach(line => {
+    romeLineById.set(line.id,{...line});
+    const path = rough[line.code] || [];
+    if (path.length > 1) romeSurfaceGeometryRegistry.set(line.id,[path.map(p=>({lat:p[0],lng:p[1]}))]);
+  });
+  const stopSeed = [
+    ["rome-tram-8","Trastevere / Argentina",41.8890,12.4720],
+    ["rome-tram-3","Colosseo area",41.8913,12.4918],
+    ["rome-tram-5","Termini east",41.8995,12.5110],
+    ["rome-tram-14","Termini east",41.8995,12.5110],
+    ["rome-tram-19","Valle Giulia",41.9140,12.4780]
+  ];
+  for (const [serviceId,name,lat,lon] of stopSeed) {
+    const line = romeLineById.get(serviceId); if (!line) continue;
+    const id = `rome:surface:${romeSlug(name)}:${serviceId}`;
+    romeSurfaceStationRegistry.set(id,{id,name,lat,lon,services:[line],city:"rome"});
+  }
+  romeTramLoaded = true; romeTramStopsLoaded = true;
+  renderRomeTransport(); rebuildRomeLineLabels();
+}
+
+ensureRomeCore = async function(force = false) {
+  if (romeCoreLoaded && !force) return;
+  if (romeCorePromise && !force) return romeCorePromise;
+  romeCorePromise = (async () => {
+    setNetworkStatus("Loading Rome Metro + Rail…");
+    const cacheKey = `${ROME_CACHE_PREFIX}core-v14c`;
+    let bundle = !force ? getCache(cacheKey) : null;
+    v14cRomeStaticFallback = false;
+    if (!bundle) {
+      try {
+        const [linesGeo, metroStationsGeo, railStationsGeo] = await Promise.all([
+          fetchRomeArcGisGeoJson(ROME_ARCGIS.metroRailLines),
+          fetchRomeArcGisGeoJson(ROME_ARCGIS.metroStations),
+          fetchRomeArcGisGeoJson(ROME_ARCGIS.railStations)
+        ]);
+        bundle = { linesGeo, metroStationsGeo, railStationsGeo };
+        setCache(cacheKey,bundle);
+      } catch (error) {
+        console.warn("Rome live/open transport data unavailable; using bundled fallback.",error);
+        bundle = v14cRomeStaticCoreBundle();
+        v14cRomeStaticFallback = true;
+      }
+    }
+    ingestRomeCoreData(bundle.linesGeo,bundle.metroStationsGeo,bundle.railStationsGeo);
+    romeCoreLoaded = true;
+    renderRomeTransport(); rebuildRomeLineLabels(); refreshSearchIfOpen();
+    setNetworkStatus(v14cRomeStaticFallback ? "Rome bundled transport ready" : "Rome transport ready");
+    if (v14cRomeStaticFallback) showToast("Rome live GIS was unreachable, so the bundled Rome network was loaded instead.",3600);
+  })().catch(error => {
+    console.error("Rome transport failed unexpectedly",error);
+    setNetworkStatus("Rome transport unavailable",true);
+  }).finally(()=>{romeCorePromise=null;});
+  return romeCorePromise;
+};
+
+ensureRomeTrams = async function(force = false) {
+  if (romeTramLoaded && !force) return;
+  if (romeTramPromise && !force) return romeTramPromise;
+  romeTramPromise = (async()=>{
+    try {
+      const where = `NOMELINEA IN (${ROME_TRAM_NUMBERS.map(number=>`'${number}'`).join(",")})`;
+      const data = await fetchRomeArcGisGeoJson(ROME_ARCGIS.surfaceRoutes,{where});
+      ROME_TRAM_LINES.forEach(line=>romeLineById.set(line.id,{...line}));
+      for (const feature of data?.features || []) {
+        const props=feature.properties||{}; const number=String(props.NOMELINEA||"").trim();
+        const line=ROME_TRAM_LINES.find(item=>item.code===number); if(!line) continue;
+        const paths=arcGisFeaturePaths(feature).filter(path=>path.length>1);
+        const existing=romeSurfaceGeometryRegistry.get(line.id)||[]; existing.push(...paths); romeSurfaceGeometryRegistry.set(line.id,existing);
+      }
+      romeTramLoaded=true; renderRomeTransport(); rebuildRomeLineLabels();
+      if(layerState.tram) ensureRomeTramStops().catch(()=>{});
+    } catch(error) {
+      console.warn("Rome tram live data unavailable; using bundled fallback",error);
+      v14cInstallStaticRomeTrams();
+      showToast("Bundled Rome tram corridors loaded.",2400);
+    }
+  })().finally(()=>{romeTramPromise=null;});
+  return romeTramPromise;
+};
+
+/* ---------- Favorite route focus: only the actual chosen segments remain ---------- */
+
+function v14cRouteEndpointIds(route) {
+  const ids = new Set();
+  for (const raw of route?.segments || []) {
+    const segment = normalizeRouteSegment(raw);
+    if (segment.stationId) ids.add(segment.stationId);
+    if (segment.startStationId) ids.add(segment.startStationId);
+    if (segment.endStationId) ids.add(segment.endStationId);
+  }
+  return ids;
+}
+
+function v14cEnforceRouteOnlyView() {
+  const route = getActiveFavoriteRoute();
+  if (!route) return;
+  const endpointIds = v14cRouteEndpointIds(route);
+
+  if (currentCityId === "rome") {
+    romeMetroRenderings.forEach(item=>item.polyline.setVisible(false));
+    romeSurfaceRenderings.forEach(item=>item.polyline.setVisible(false));
+    romeLineLabelOverlays.forEach(overlay=>overlay.setVisible(false));
+    romeMetroStationOverlays.forEach(overlay=>overlay.setVisible(endpointIds.has(overlay.station.id)));
+    romeSurfaceStationOverlays.forEach(overlay=>overlay.setVisible(endpointIds.has(overlay.station.id)));
+  } else if (currentCityId === "london") {
+    lineRenderings.forEach(item=>item.polyline.setVisible(false));
+    surfaceRenderings.forEach(item=>item.polyline.setVisible(false));
+    lineLabelOverlays.forEach(overlay=>overlay.setVisible(false));
+    surfaceLabelOverlays.forEach(overlay=>overlay.setVisible(false));
+    stationOverlays.forEach(overlay=>overlay.setVisible(endpointIds.has(overlay.station.id)));
+    surfaceStationOverlays.forEach(overlay=>overlay.setVisible(endpointIds.has(overlay.station.id)));
+  }
+}
+
+const applyLayerStateV14CBase = applyLayerState;
+applyLayerState = function() {
+  applyLayerStateV14CBase();
+  v14cEnforceRouteOnlyView();
+  refreshPreciseRouteHighlights();
+};
+
+/* ---------- Walk segments now have real start + end points ---------- */
+
+const normalizeRouteSegmentV14CBase = normalizeRouteSegment;
+normalizeRouteSegment = function(segment) {
+  const normalized = normalizeRouteSegmentV14CBase(segment || {});
+  normalized.walkStartName = segment?.walkStartName || normalized.walkStartName || "";
+  normalized.walkEndName = segment?.walkEndName || normalized.walkEndName || "";
+  normalized.walkStartLat = Number.isFinite(Number(segment?.walkStartLat)) ? Number(segment.walkStartLat) : (Number.isFinite(Number(normalized.walkStartLat)) ? Number(normalized.walkStartLat) : undefined);
+  normalized.walkStartLng = Number.isFinite(Number(segment?.walkStartLng)) ? Number(segment.walkStartLng) : (Number.isFinite(Number(normalized.walkStartLng)) ? Number(normalized.walkStartLng) : undefined);
+  normalized.walkEndLat = Number.isFinite(Number(segment?.walkEndLat)) ? Number(segment.walkEndLat) : (Number.isFinite(Number(normalized.walkEndLat)) ? Number(normalized.walkEndLat) : undefined);
+  normalized.walkEndLng = Number.isFinite(Number(segment?.walkEndLng)) ? Number(segment.walkEndLng) : (Number.isFinite(Number(normalized.walkEndLng)) ? Number(normalized.walkEndLng) : undefined);
+  if (normalized.mode === "walk" && !normalized.walkStartName && segment?.service) normalized.walkStartName = String(segment.service).replace(/^walk\s*(from)?\s*/i,"").trim();
+  return normalized;
+};
+
+const routeSegmentEditorHtmlV14CBase = routeSegmentEditorHtml;
+routeSegmentEditorHtml = function(rawSegment,index) {
+  const segment = normalizeRouteSegment(rawSegment);
+  if (segment.mode !== "walk") return routeSegmentEditorHtmlV14CBase(segment,index);
+  return `<div class="route-segment-card walk-segment-card" data-route-card="${index}">
+    <div class="route-segment-card-head"><span class="route-step">${index+1}</span><select class="form-control route-mode" data-segment-mode="${index}"><option value="metro">Metro</option><option value="rail">Rail</option><option value="tram">Tram</option><option value="bus">Bus</option><option value="walk" selected>Walk</option></select><button class="mini-danger" data-remove-segment="${index}" title="Remove segment">×</button></div>
+    <div class="walk-endpoint-block"><div class="walk-endpoint-title">START</div><input class="form-control" data-walk-start-label="${index}" value="${escapeHtml(segment.walkStartName||"")}" placeholder="Starting point"/><div class="walk-pick-actions"><button class="tiny-route-btn" data-pick-walk="start" data-index="${index}">Pick on map</button><button class="tiny-route-btn" data-current-walk="start" data-index="${index}">◎ Current</button></div></div>
+    <div class="walk-direction-arrow">↓</div>
+    <div class="walk-endpoint-block"><div class="walk-endpoint-title">END</div><input class="form-control" data-walk-end-label="${index}" value="${escapeHtml(segment.walkEndName||"")}" placeholder="Stopping point"/><div class="walk-pick-actions"><button class="tiny-route-btn" data-pick-walk="end" data-index="${index}">Pick on map</button><button class="tiny-route-btn" data-current-walk="end" data-index="${index}">◎ Current</button></div></div>
+    <div class="route-segment-status">${segment.walkStartName && segment.walkEndName ? `Walk · ${escapeHtml(segment.walkStartName)} → ${escapeHtml(segment.walkEndName)}` : "Choose both the start and stopping point."}</div>
+  </div>`;
+};
+
+function v14cClosestKnownName(lat,lng) {
+  const point={lat,lng}; let best=null,bestDistance=.18;
+  for (const place of frequentPlaces) {
+    if (getPlaceCityId(place)!==currentCityId) continue;
+    const d=haversineKm(point,{lat:Number(place.lat),lng:Number(place.lng)}); if(d<bestDistance){bestDistance=d;best=place.name;}
+  }
+  const stationSets = currentCityId === "rome" ? [romeMetroStationRegistry,romeSurfaceStationRegistry] : [stationRegistry,surfaceStationRegistry];
+  for (const registry of stationSets) for (const station of registry.values()) {
+    const d=haversineKm(point,{lat:Number(station.lat),lng:Number(station.lon??station.lng)}); if(d<bestDistance){bestDistance=d;best=station.name;}
+  }
+  return best || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+}
+
+function v14cSetWalkPoint(index,endpoint,position,label) {
+  const segment=routeEditorSegments[index]; if(!segment || segment.mode!=="walk") return;
+  const lat=Number(position.lat),lng=Number(position.lng);
+  if(endpoint==="start") { segment.walkStartLat=lat;segment.walkStartLng=lng;segment.walkStartName=label||v14cClosestKnownName(lat,lng); }
+  else { segment.walkEndLat=lat;segment.walkEndLng=lng;segment.walkEndName=label||v14cClosestKnownName(lat,lng); }
+  v14cWalkPick=null; renderRouteEditorSegments(); bringPanelToFront(el("route-editor-sheet"));
+}
+
+function v14cInstallWalkEditorHandlers() {
+  const node=el("route-segments"); if(!node)return;
+  node.querySelectorAll("[data-walk-start-label]").forEach(input=>input.addEventListener("input",()=>{routeEditorSegments[Number(input.dataset.walkStartLabel)].walkStartName=input.value;}));
+  node.querySelectorAll("[data-walk-end-label]").forEach(input=>input.addEventListener("input",()=>{routeEditorSegments[Number(input.dataset.walkEndLabel)].walkEndName=input.value;}));
+  node.querySelectorAll("[data-pick-walk]").forEach(button=>button.addEventListener("click",()=>{v14cWalkPick={index:Number(button.dataset.index),endpoint:button.dataset.pickWalk};showToast(`Tap the map for the walk ${button.dataset.pickWalk} point.`,2600);}));
+  node.querySelectorAll("[data-current-walk]").forEach(button=>button.addEventListener("click",()=>{
+    const index=Number(button.dataset.index),endpoint=button.dataset.currentWalk;
+    if(lastUserPosition?.coords){v14cSetWalkPoint(index,endpoint,{lat:lastUserPosition.coords.lat,lng:lastUserPosition.coords.lng},"Current location");return;}
+    if(!navigator.geolocation){showToast("Location is not available in this browser.");return;}
+    navigator.geolocation.getCurrentPosition(pos=>v14cSetWalkPoint(index,endpoint,{lat:pos.coords.latitude,lng:pos.coords.longitude},"Current location"),()=>showToast("Allow location access first."),{enableHighAccuracy:true,timeout:9000});
+  }));
+}
+
+const renderRouteEditorSegmentsV14CBase = renderRouteEditorSegments;
+renderRouteEditorSegments = function() {
+  renderRouteEditorSegmentsV14CBase();
+  v14cInstallWalkEditorHandlers();
+  refreshPreciseRouteHighlights();
+};
+
+const routeSegmentValidV14CBase = routeSegmentValid;
+routeSegmentValid = function(rawSegment) {
+  const segment=normalizeRouteSegment(rawSegment);
+  if(segment.mode==="walk") return !!segment.walkStartName && !!segment.walkEndName;
+  return routeSegmentValidV14CBase(segment);
+};
+
+const saveFavoriteRouteFromEditorV14CBase = saveFavoriteRouteFromEditor;
+saveFavoriteRouteFromEditor = function() {
+  const name=el("route-name-input").value.trim();
+  const segments=routeEditorSegments.map(normalizeRouteSegment).filter(segment=>segment.mode==="walk"||segment.mode==="bus"||segment.service);
+  if(!name){showToast("Give the route a name first.");return;}
+  const incomplete=segments.find(segment=>!routeSegmentValid(segment));
+  if(incomplete){showToast(incomplete.mode==="walk"?"Choose both start and stopping points for every walk segment.":"Complete every route segment before saving.",3200);return;}
+  if(!segments.length){showToast("Add at least one route segment.");return;}
+  const route={id:`route-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,name,segments,useCount:0,createdAt:Date.now(),city:currentCityId};
+  favoriteRoutes.push(route);saveFavoriteRoutes();closeRouteEditor();renderFavoritesSheet();refreshSearchIfOpen();showToast(`Saved route: ${route.name}`);
+};
+
+const segmentDisplayNameV14CBase = segmentDisplayName;
+segmentDisplayName = function(rawSegment) {
+  const segment=normalizeRouteSegment(rawSegment);
+  if(segment.mode==="walk") return segment.walkStartName&&segment.walkEndName?`Walk · ${segment.walkStartName} → ${segment.walkEndName}`:(segment.service||"Walk");
+  return segmentDisplayNameV14CBase(segment);
+};
+
+function v14cWalkPath(segment) {
+  if(!Number.isFinite(segment.walkStartLat)||!Number.isFinite(segment.walkStartLng)||!Number.isFinite(segment.walkEndLat)||!Number.isFinite(segment.walkEndLng))return [];
+  return [{lat:segment.walkStartLat,lng:segment.walkStartLng},{lat:segment.walkEndLat,lng:segment.walkEndLng}];
+}
+
+renderRouteHighlights = function(segments,options={}) {
+  clearRouteHighlights(); if(!map)return;
+  for(const raw of segments||[]) {
+    const segment=normalizeRouteSegment(raw);
+    if(segment.mode==="walk") {
+      const path=v14cWalkPath(segment); if(path.length<2)continue;
+      const halo=new google.maps.Polyline({map,path,strokeColor:"#0B1220",strokeOpacity:.82,strokeWeight:8,zIndex:88,clickable:false});
+      const walk=new google.maps.Polyline({map,path,strokeColor:"#F4F7FB",strokeOpacity:1,strokeWeight:4,zIndex:89,clickable:false,icons:[{icon:{path:"M 0,-1 0,1",strokeOpacity:1,scale:3},offset:"0",repeat:"14px"}]});
+      routeHighlightPolylines.push(halo,walk);continue;
+    }
+    const path=precisePathForSegment(segment); if(path.length<2)continue;
+    const color=segmentColor(segment);
+    const halo=new google.maps.Polyline({map,path,strokeColor:"#FFFFFF",strokeOpacity:options.preview?.82:.94,strokeWeight:12,zIndex:88,clickable:false});
+    const glow=new google.maps.Polyline({map,path,strokeColor:color,strokeOpacity:1,strokeWeight:6.5,zIndex:89,clickable:false});
+    routeHighlightPolylines.push(halo,glow);
+  }
+};
+
+const focusFavoriteRouteV14CBase = focusFavoriteRoute;
+focusFavoriteRoute = function(route) {
+  const bounds=new google.maps.LatLngBounds(); let hasAny=false;
+  for(const raw of route?.segments||[]) {
+    const segment=normalizeRouteSegment(raw);
+    if(segment.mode==="walk") { for(const p of v14cWalkPath(segment)){bounds.extend(p);hasAny=true;} continue; }
+    const path=precisePathForSegment(segment); if(path.length){path.forEach(p=>bounds.extend(p));hasAny=true;continue;}
+    const paths=transportGeometryForSegment(segment); paths.flat().forEach(p=>{bounds.extend(p);hasAny=true;});
+  }
+  if(hasAny&&!bounds.isEmpty()){map.fitBounds(bounds,48);return;}
+  focusFavoriteRouteV14CBase(route);
+};
+
+function v14cInstallMapPickListener() {
+  if(v14cMapPickListenerInstalled||!map)return;
+  v14cMapPickListenerInstalled=true;
+  map.addListener("click",event=>{
+    if(!v14cWalkPick)return;
+    const lat=event.latLng.lat(),lng=event.latLng.lng();
+    v14cSetWalkPoint(v14cWalkPick.index,v14cWalkPick.endpoint,{lat,lng});
+    showToast("Walk point added.",1500);
+  });
+}
+
+const initMapV14CBase = initMap;
+initMap = function() { initMapV14CBase(); v14cInstallMapPickListener(); };
+
+/* Better refresh wording for Rome fallback mode. */
+const updateDataAttributionV14CBase = updateDataAttributionV14B;
+updateDataAttributionV14B = function(){
+  updateDataAttributionV14CBase();
+  const node=el("data-attribution");
+  if(node&&currentCityId==="rome"&&v14cRomeStaticFallback)node.textContent="Rome transport: bundled fallback based on Roma Mobilità / ATAC network · Weather © Open-Meteo";
+};
+
+console.info(`Our Cities Map ${V14C_VERSION} patch loaded`);
