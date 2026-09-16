@@ -10,7 +10,7 @@
   <title>Our Cities Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.4d" />
+  <link rel="stylesheet" href="styles.css?v=1.4e" />
 </head>
 <body>
   <main id="app">
@@ -120,7 +120,7 @@
             <button id="panel-metro-toggle" class="panel-layer-toggle" data-layer="metro" aria-pressed="false"><span class="panel-layer-icon metro-symbol">M</span><span class="panel-layer-label">Metro</span></button>
             <button id="panel-rail-toggle" class="panel-layer-toggle" data-layer="rail" aria-pressed="false"><span class="panel-layer-icon rail-symbol">◇</span><span class="panel-layer-label">Rail</span></button>
             <button id="panel-tram-toggle" class="panel-layer-toggle" data-layer="tram" aria-pressed="false"><span class="panel-layer-icon tram-symbol">▰</span><span class="panel-layer-label">Tram</span></button>
-            <button id="panel-bus-toggle" class="panel-layer-toggle" data-layer="bus" aria-pressed="false"><span class="panel-layer-icon">BRT</span><span class="panel-layer-label">Metrobüs</span></button>
+            <button id="panel-bus-toggle" class="panel-layer-toggle" data-layer="bus" aria-pressed="false" disabled title="Bus layer arrives in a later update"><span class="panel-layer-icon">B</span><span class="panel-layer-label">Bus</span><span class="panel-layer-badge">LATER</span></button>
           </div>
         </section>
 
@@ -181,7 +181,7 @@
       <h2>Add something</h2>
       <div class="sub">Frequent places are saved on this device. Favorite routes can already combine Metro, Rail, Tram, Bus and walking segments.</div>
       <div class="add-options">
-        <button class="add-option route-add-option" data-add-method="route"><span>★</span><b>Create favorite route</b><small>Build a reusable multi-mode route</small></button>
+        <button class="add-option route-add-option" data-add-method="navigate"><span>↗</span><b>Create route</b><small>Car, public transport, walk, taxi or custom</small></button>
         <button class="add-option" data-add-method="search"><span>⌕</span><b>Search location</b><small>Find a place or address in the current city</small></button>
         <button class="add-option" data-add-method="tap"><span>⌖</span><b>Tap map</b><small>Pick an exact point</small></button>
         <button class="add-option" data-add-method="current"><span>◎</span><b>Use current location</b><small>Use your device position</small></button>
@@ -195,7 +195,12 @@
       <div class="detail-label">FAVORITES</div>
       <h2 id="favorites-city-title">Your city</h2>
       <div class="favorites-section">
-        <div class="favorites-heading"><span>Frequent Places</span><small>Saved on this device</small></div>
+        <div class="favorites-heading"><span>Frequent Places</span><small>Choose a category first</small></div>
+        <div id="favorites-category-grid" class="favorites-category-grid"></div>
+        <div id="favorites-category-active" class="favorites-category-active hidden">
+          <button id="favorites-category-back" class="tiny-panel-action">← Categories</button>
+          <b id="favorites-category-title"></b>
+        </div>
         <div id="favorite-places-list" class="favorites-list"></div>
       </div>
       <div class="favorites-section">
@@ -236,6 +241,28 @@
       </div>
       <div id="location-search-status" class="sub detail-section">Search the current city by place name or address.</div>
       <div class="fineprint detail-section">This search uses Google's Geocoding service. If your project has only Maps JavaScript API enabled, the other add methods still work without it.</div>
+    </section>
+
+    <section id="navigation-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Navigation">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button id="navigation-close" class="detail-close" aria-label="Close">×</button>
+      <div class="detail-label">NAVIGATION</div>
+      <h2>Choose how to get there</h2>
+      <div class="navigation-endpoints">
+        <div class="navigation-endpoint"><span>FROM</span><b id="navigation-origin-name">Current location</b></div>
+        <div class="navigation-endpoint"><span>TO</span><b id="navigation-destination-name">Map centre</b></div>
+      </div>
+      <div class="navigation-quick-actions"><button id="navigation-use-location" class="tiny-panel-action">◎ Use my location</button><button id="navigation-destination-centre" class="tiny-panel-action">＋ Destination = map centre</button></div>
+      <div class="navigation-mode-grid" id="navigation-mode-grid">
+        <button class="navigation-mode" data-nav-mode="drive"><span>🚗</span><b>Car</b><small>Traffic-aware</small></button>
+        <button class="navigation-mode" data-nav-mode="transit"><span>🚇</span><b>Public transport</b><small>Transfers included</small></button>
+        <button class="navigation-mode" data-nav-mode="walk"><span>🚶</span><b>Walk</b><small>Walkable roads</small></button>
+        <button class="navigation-mode" data-nav-mode="taxi"><span>🚕</span><b>Taxi</b><small>Traffic + fare estimate</small></button>
+        <button class="navigation-mode navigation-mode-custom" data-nav-mode="custom"><span>★</span><b>Custom route</b><small>Build it yourself</small></button>
+      </div>
+      <div id="navigation-status" class="sub detail-section">Choose a mode to calculate routes.</div>
+      <div id="navigation-taxi-ranks" class="navigation-taxi-ranks hidden"></div>
+      <div id="navigation-results" class="navigation-results"></div>
     </section>
 
     <section id="route-editor-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Create favorite route">
@@ -301,6 +328,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.4d1"></script>
+  <script src="app.js?v=1.4e"></script>
 </body>
 </html>

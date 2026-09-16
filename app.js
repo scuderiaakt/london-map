@@ -7574,3 +7574,390 @@ CITY_CONFIG.rome.status="Rome ready · Metro / Rail / Tram + reliable approximat
 CITY_CONFIG.istanbul.status="İstanbul ready · Metro / Marmaray / Tram / Metrobüs + city information.";
 
 console.info(`Our Cities Map ${V14D1_VERSION} hotfix loaded`);
+
+/* ---------- v1.4E: navigation, city themes, performance, favorites UX ---------- */
+const V14E_VERSION = "1.4E";
+
+/* ----- City themes ----- */
+const v14eThemeClasses = ["city-theme-london","city-theme-rome","city-theme-istanbul","city-theme-izmir"];
+v14dApplyCityTheme = function() {
+  v14eThemeClasses.forEach(cls => document.body.classList.remove(cls));
+  document.body.classList.add(`city-theme-${currentCityId}`);
+  document.body.dataset.cityTheme = currentCityId;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  const color = currentCityId === "rome" || currentCityId === "izmir" ? "#082f33" : currentCityId === "istanbul" ? "#241014" : "#0b1727";
+  if (meta) meta.content = color;
+};
+
+/* ----- Metrobüs belongs to İstanbul rapid-transit/Metro layer; Bus is reserved for later ----- */
+try {
+  V14D1_METROBUS.family = "metro";
+  V14D1_METROBUS.ref = "MB";
+  V14D1_METROBUS.code = "MB";
+  V14D1_METROBUS.displayName = "MB · Metrobüs";
+  V14D1_METROBUS.color = "#E65D43";
+} catch {}
+layerState.bus = false;
+function v14eSyncBusPlaceholder() {
+  const button = el("panel-bus-toggle");
+  if (!button) return;
+  button.disabled = true;
+  button.classList.remove("active");
+  button.setAttribute("aria-pressed", "false");
+  button.title = "Bus layer arrives in a later update";
+  const label = button.querySelector(".panel-layer-label");
+  if (label) label.textContent = "Bus";
+  const icon = button.querySelector(".panel-layer-icon");
+  if (icon) icon.textContent = "B";
+}
+const syncV13EPanelUIV14EBase = syncV13EPanelUI;
+syncV13EPanelUI = function() { syncV13EPanelUIV14EBase(); v14eSyncBusPlaceholder(); };
+
+/* ----- Romantic Ela city entrance ----- */
+function v14eEnsureHeartRain() {
+  const rain = v14d1EnsureHeartRain();
+  while (rain.children.length < 64) {
+    const i = rain.children.length;
+    const heart = document.createElement("span");
+    heart.className = "welcome-heart-drop";
+    heart.textContent = "♥";
+    heart.style.left = `${(i * 29.7 + 3) % 100}%`;
+    heart.style.fontSize = `${15 + ((i * 17) % 34)}px`;
+    heart.style.setProperty("--delay", `${((i * 37) % 700) / 1000}s`);
+    heart.style.setProperty("--duration", `${1.45 + ((i * 11) % 75) / 100}s`);
+    heart.style.setProperty("--drift", `${-58 + ((i * 23) % 116)}px`);
+    rain.appendChild(heart);
+  }
+  return rain;
+}
+async function v14eHeartBurst(duration = 2050) {
+  const rain = v14eEnsureHeartRain();
+  const heart = el("welcome-heart");
+  rain.classList.remove("show"); heart?.classList.remove("show");
+  void rain.offsetWidth;
+  rain.classList.add("show"); heart?.classList.add("show");
+  await v14dSleep(duration);
+  rain.classList.remove("show"); heart?.classList.remove("show");
+}
+const v14dRunProfileStartV14EBase = v14dRunProfileStart;
+v14dRunProfileStart = async function(profile, { showWelcomeEffect = false } = {}) {
+  if (profile !== "ela" || !showWelcomeEffect) return v14dRunProfileStartV14EBase(profile, { showWelcomeEffect });
+  if (!map) { v14dPendingProfile = profile; return; }
+  localStorage.setItem(V14D_PROFILE_STORAGE, "ela");
+  await v14d1PlaceProfileCityInstantly("rome");
+  const screen = el("welcome-screen");
+  screen?.classList.add("leaving");
+  await v14dSleep(180);
+  await v14eHeartBurst(2100);
+  screen?.classList.add("hidden"); screen?.classList.remove("leaving");
+  showCityArrival({ ...CITY_CONFIG.rome, gesture: "Ela ❤️" });
+  ensureRomeCore().catch(()=>{});
+  v14ePrefetchCityInfo("rome");
+};
+
+/* ----- City switching: unload old heavy layers and replay Ela romance in Rome/İzmir ----- */
+function v14eClearLayerStateForSwitch(cityId) {
+  layerState.metro = false; layerState.rail = false; layerState.tram = false; layerState.bus = false; layerState.places = false;
+  cityInfoState.districts = false; cityInfoState.weather = false; cityInfoState.wind = false;
+  activeFavoriteRouteId = null; transientTransportSelection = null; persistentTransportFocus = null;
+  trafficLayer?.setMap(null);
+  if (cityLayerMemory[cityId]) cityLayerMemory[cityId] = { metro:false, rail:false, tram:false, bus:false, places:false, districts:false, weather:false, wind:false };
+  clearRouteHighlights?.();
+}
+let v14eArrivalSuppressed = false;
+let v14eQueuedArrival = null;
+const showCityArrivalV14EReal = showCityArrival;
+showCityArrival = function(config) {
+  if (v14eArrivalSuppressed) { v14eQueuedArrival = config; return; }
+  return showCityArrivalV14EReal(config);
+};
+const switchCityV14EBase = switchCity;
+switchCity = async function(nextCityId, options = {}) {
+  const changing = nextCityId !== currentCityId;
+  const profile = v14dStoredProfile?.();
+  const romantic = changing && profile === "ela" && (nextCityId === "rome" || nextCityId === "izmir");
+  if (changing) {
+    v14eClearLayerStateForSwitch(currentCityId);
+    applyLayerState();
+    if (cityLayerMemory[nextCityId]) cityLayerMemory[nextCityId] = { metro:false, rail:false, tram:false, bus:false, places:false, districts:false, weather:false, wind:false };
+  }
+  v14eArrivalSuppressed = romantic;
+  v14eQueuedArrival = null;
+  await switchCityV14EBase(nextCityId, options);
+  v14eArrivalSuppressed = false;
+  if (changing) {
+    v14eClearLayerStateForSwitch(currentCityId);
+    applyLayerState(); syncV13EPanelUI();
+  }
+  v14dApplyCityTheme();
+  if (romantic) {
+    await v14eHeartBurst(2050);
+    showCityArrivalV14EReal({ ...CITY_CONFIG[nextCityId], gesture: "Ela ❤️" });
+  } else if (v14eQueuedArrival) {
+    showCityArrivalV14EReal(v14eQueuedArrival);
+  }
+  v14eQueuedArrival = null;
+  v14ePrefetchCityInfo(nextCityId);
+};
+
+/* ----- Smarter city-info warmup: accurate data still used; it simply begins in the background ----- */
+const v14ePrefetchedInfo = new Set();
+function v14eIdle(fn) {
+  if (window.requestIdleCallback) requestIdleCallback(fn, { timeout: 2200 }); else setTimeout(fn, 850);
+}
+function v14ePrefetchCityInfo(cityId) {
+  if (v14ePrefetchedInfo.has(cityId)) return;
+  v14ePrefetchedInfo.add(cityId);
+  v14eIdle(async () => {
+    try {
+      if (cityId === "rome") { await ensureRomeMunicipi(); await ensureRomeWeather(); }
+      else if (cityId === "istanbul" || cityId === "izmir") { await ensureV14DDistricts(cityId); await ensureV14DWeather(cityId); }
+    } catch (err) { console.debug("City-info prefetch deferred", err); }
+  });
+}
+
+/* ----- Favorites category manager ----- */
+let v14eManageFavoriteCategory = null;
+function v14eFavoriteMeta(category) {
+  return FAVORITE_CATEGORY_META.find(item => item.id === category) || { id:category, icon:"●", color:"#6b7b91" };
+}
+function v14eRenderFavoriteCategoryGrid() {
+  const grid = el("favorites-category-grid"), active = el("favorites-category-active"), list = el("favorite-places-list");
+  if (!grid || !active || !list) return;
+  const cityPlaces = frequentPlaces.filter(place => getPlaceCityId(place) === currentCityId);
+  if (!v14eManageFavoriteCategory) {
+    active.classList.add("hidden"); list.classList.add("hidden"); grid.classList.remove("hidden");
+    const cats = FAVORITE_CATEGORY_META.filter(meta => meta.id !== "all");
+    grid.innerHTML = cats.map(meta => {
+      const count = cityPlaces.filter(p => canonicalFavoriteCategory(p.category,p.name) === meta.id).length;
+      return `<button class="favorite-category-block" data-manage-category="${escapeHtml(meta.id)}"><span style="--cat:${meta.color}">${meta.icon}</span><b>${escapeHtml(meta.id)}</b><small>${count} place${count===1?"":"s"}</small></button>`;
+    }).join("");
+    grid.querySelectorAll("[data-manage-category]").forEach(btn => btn.addEventListener("click",()=>{v14eManageFavoriteCategory=btn.dataset.manageCategory;renderFavoritesSheet();}));
+  } else {
+    grid.classList.add("hidden"); active.classList.remove("hidden"); list.classList.remove("hidden");
+    el("favorites-category-title").textContent = v14eManageFavoriteCategory;
+  }
+}
+const openFavoritesSheetV14EBase = openFavoritesSheet;
+openFavoritesSheet = function() { v14eManageFavoriteCategory = null; openFavoritesSheetV14EBase(); v14eRenderFavoriteCategoryGrid(); };
+const renderFavoritesSheetV14EBase = renderFavoritesSheet;
+renderFavoritesSheet = function() {
+  const placesNode = el("favorite-places-list"), routesNode = el("favorite-routes-list");
+  if (!placesNode || !routesNode) return renderFavoritesSheetV14EBase();
+  v14eRenderFavoriteCategoryGrid();
+  const cityPlaces = frequentPlaces.filter(place => getPlaceCityId(place) === currentCityId);
+  const filtered = v14eManageFavoriteCategory ? cityPlaces.filter(p => canonicalFavoriteCategory(p.category,p.name) === v14eManageFavoriteCategory) : [];
+  placesNode.innerHTML = filtered.length ? filtered.map(place => {
+    const cat = canonicalFavoriteCategory(place.category, place.name), meta = v14eFavoriteMeta(cat);
+    return `<div class="favorite-row"><button class="favorite-main" data-open-place="${escapeHtml(place.id)}"><span class="favorite-symbol" style="background:${meta.color}">${meta.icon}</span><span><b>${escapeHtml(place.name)}</b><small>${escapeHtml(cat)}${place.note?` · ${escapeHtml(place.note)}`:""}</small></span></button><button class="favorite-delete" data-delete-place="${escapeHtml(place.id)}">×</button></div>`;
+  }).join("") : (v14eManageFavoriteCategory ? `<div class="empty-state">No ${escapeHtml(v14eManageFavoriteCategory.toLowerCase())} favorites yet.</div>` : "");
+  const sortedRoutes = favoriteRoutes.filter(route=>getRouteCityId(route)===currentCityId).slice().sort((a,b)=>Number(b.useCount||0)-Number(a.useCount||0)||a.name.localeCompare(b.name));
+  routesNode.innerHTML = sortedRoutes.length ? sortedRoutes.map(route=>`<div class="favorite-row"><button class="favorite-main" data-open-route="${escapeHtml(route.id)}"><span class="favorite-symbol route-star">★</span><span><b>${escapeHtml(route.name)}</b><small>${escapeHtml(routeSegmentSummary(route))}</small></span></button><button class="favorite-delete" data-delete-route="${escapeHtml(route.id)}">×</button></div>`).join("") : `<div class="empty-state">No favorite routes yet.</div>`;
+  placesNode.querySelectorAll("[data-open-place]").forEach(button=>button.addEventListener("click",()=>{const place=frequentPlaces.find(x=>x.id===button.dataset.openPlace);if(!place)return;closeFavoritesSheet(false);layerState.places=true;applyLayerState();map.panTo({lat:place.lat,lng:place.lng});if((map.getZoom()||0)<16)map.setZoom(16);showPlaceInfo(place);}));
+  placesNode.querySelectorAll("[data-delete-place]").forEach(button=>button.addEventListener("click",()=>deleteFrequentPlace(button.dataset.deletePlace)));
+  routesNode.querySelectorAll("[data-open-route]").forEach(button=>button.addEventListener("click",()=>{closeFavoritesSheet(false);activateFavoriteRoute(button.dataset.openRoute);}));
+  routesNode.querySelectorAll("[data-delete-route]").forEach(button=>button.addEventListener("click",()=>deleteFavoriteRoute(button.dataset.deleteRoute)));
+};
+el("favorites-category-back")?.addEventListener("click",()=>{v14eManageFavoriteCategory=null;renderFavoritesSheet();});
+
+/* Horizontal favorite categories: wheel/trackpad motion also scrolls sideways. */
+el("favorite-category-row")?.addEventListener("wheel", event => {
+  if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) { event.preventDefault(); event.currentTarget.scrollLeft += event.deltaY; }
+}, { passive:false });
+
+/* ----- POI photos: exact Google Place photo first, tasteful generic fallback second ----- */
+function v14eGenericPhoto(name="", type="") {
+  const hay = normalizeSearch(`${name} ${type}`);
+  if (/domino|pizza|pizzeria/.test(hay)) return "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=1000&q=75";
+  if (/coffee|cafe|café|bakery/.test(hay)) return "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&w=1000&q=75";
+  if (/restaurant|food|bar|pub/.test(hay)) return "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1000&q=75";
+  if (/market|supermarket|grocery|store|shop/.test(hay)) return "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1000&q=75";
+  if (/hospital|clinic|pharmacy|health/.test(hay)) return "https://images.unsplash.com/photo-1586773860418-d37222d8fce3?auto=format&fit=crop&w=1000&q=75";
+  if (/university|school|college|education/.test(hay)) return "https://images.unsplash.com/photo-1523050854058-8df90110c9f9?auto=format&fit=crop&w=1000&q=75";
+  return "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1000&q=75";
+}
+
+/* ----- Navigation ----- */
+let v14eNavigation = { origin:null, destination:null, mode:null, candidates:[], selectedIndex:0, taxiRanks:[] };
+let v14eNavPolylines = [];
+function v14eClearNavPolylines() { v14eNavPolylines.forEach(p=>p.setMap(null)); v14eNavPolylines=[]; }
+function v14ePoint(value) { return value && Number.isFinite(Number(value.lat)) && Number.isFinite(Number(value.lng)) ? {lat:Number(value.lat),lng:Number(value.lng)} : null; }
+function v14eDefaultOrigin() {
+  const live = v14ePoint(lastUserPosition?.coords); if (live) return { ...live, name:"Current location" };
+  const c = map?.getCenter(); return c ? {lat:c.lat(),lng:c.lng(),name:"Map centre"} : {...CITY_CONFIG[currentCityId].center,name:CITY_CONFIG[currentCityId].name};
+}
+function v14eDefaultDestination() { const c=map?.getCenter(); return c?{lat:c.lat(),lng:c.lng(),name:"Map centre"}:{...CITY_CONFIG[currentCityId].center,name:CITY_CONFIG[currentCityId].name}; }
+function v14eOpenNavigation(destination=null) {
+  v14eNavigation.origin = v14eDefaultOrigin();
+  v14eNavigation.destination = destination ? { ...destination, name:destination.name||"Destination" } : v14eDefaultDestination();
+  v14eNavigation.mode = null; v14eNavigation.candidates=[]; v14eNavigation.taxiRanks=[];
+  el("navigation-origin-name").textContent=v14eNavigation.origin.name;
+  el("navigation-destination-name").textContent=v14eNavigation.destination.name;
+  el("navigation-status").textContent="Choose a mode to calculate routes.";
+  el("navigation-results").innerHTML=""; el("navigation-taxi-ranks").classList.add("hidden");
+  document.querySelectorAll("[data-nav-mode]").forEach(b=>b.classList.remove("active"));
+  closeAddSheet?.(false); closeDetail?.(false); closeFavoritesSheet?.(false);
+  el("navigation-sheet").classList.remove("hidden"); document.body.classList.add("detail-open");
+  restorePanelPosition?.(el("navigation-sheet")); bringPanelToFront?.(el("navigation-sheet"));
+}
+function v14eCloseNavigation(updateBody=true) { v14eClearNavPolylines(); el("navigation-sheet")?.classList.add("hidden"); if(updateBody&&allOtherSheetsClosed("navigation-sheet"))document.body.classList.remove("detail-open"); }
+function v14eRoutePath(route) {
+  const raw=route?.overview_path||route?.overviewPath||[];
+  return raw.map(p=>({lat:typeof p.lat==="function"?p.lat():Number(p.lat),lng:typeof p.lng==="function"?p.lng():Number(p.lng)})).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));
+}
+function v14eLegDurationSec(route) { return Number(route?.legs?.reduce((s,l)=>s+Number(l.duration_in_traffic?.value||l.duration?.value||0),0)||0); }
+function v14eLegDistanceM(route) { return Number(route?.legs?.reduce((s,l)=>s+Number(l.distance?.value||0),0)||0); }
+function v14eTransitStats(route) {
+  let transfers=0, walk=0, lines=[];
+  for(const leg of route?.legs||[]) for(const step of leg.steps||[]) {
+    const transit=step.transit;
+    if(transit){transfers++;const ln=transit.line?.short_name||transit.line?.name;if(ln)lines.push(ln);} else walk+=Number(step.distance?.value||0);
+  }
+  return { transfers:Math.max(0,transfers-1), walk, lines:[...new Set(lines)] };
+}
+function v14eCandidateFromRoute(route, source="") {
+  const transit=v14eTransitStats(route), duration=v14eLegDurationSec(route), distance=v14eLegDistanceM(route), path=v14eRoutePath(route);
+  return { route, source, duration, distance, path, transfers:transit.transfers, walk:transit.walk, lines:transit.lines, summary:route.summary||transit.lines.join(" → ")||source||"Route" };
+}
+function v14eCandidateKey(c) { const a=c.path[0],b=c.path[c.path.length-1]; return `${Math.round(c.duration/60)}|${Math.round(c.distance/100)}|${c.summary}|${a?`${a.lat.toFixed(3)},${a.lng.toFixed(3)}`:""}|${b?`${b.lat.toFixed(3)},${b.lng.toFixed(3)}`:""}`; }
+function v14eDeduplicateCandidates(list) { const seen=new Set(),out=[]; for(const c of list){const k=v14eCandidateKey(c);if(!c.path.length||seen.has(k))continue;seen.add(k);out.push(c);} return out.sort((a,b)=>a.duration-b.duration||a.transfers-b.transfers||a.walk-b.walk).slice(0,10); }
+function v14eFormatDuration(sec){if(!sec)return"—";const min=Math.round(sec/60);return min<60?`${min} min`:`${Math.floor(min/60)} h ${min%60} min`;}
+function v14eFormatDistance(m){return m<1000?`${Math.round(m)} m`:`${(m/1000).toFixed(m<10000?1:0)} km`;}
+async function v14eDirectionsRequest(request, source) {
+  const {DirectionsService}=await google.maps.importLibrary("routes"); const service=new DirectionsService();
+  const result=await service.route(request); return (result?.routes||[]).map(route=>v14eCandidateFromRoute(route,source));
+}
+async function v14eBuildCandidates(mode) {
+  const {TravelMode,TransitMode,TransitRoutePreference,TrafficModel}=await google.maps.importLibrary("routes");
+  const origin=v14eNavigation.origin,destination=v14eNavigation.destination, now=new Date();
+  if(mode==="drive"||mode==="taxi") {
+    const base={origin,destination,travelMode:TravelMode?.DRIVING||google.maps.TravelMode.DRIVING,provideRouteAlternatives:true,drivingOptions:{departureTime:now,trafficModel:TrafficModel?.BEST_GUESS||google.maps.TrafficModel?.BEST_GUESS}};
+    const variants=[[{},"Fastest"],[{avoidHighways:true},"Avoid motorways"],[{avoidTolls:true},"Avoid tolls"],[{avoidHighways:true,avoidTolls:true},"Local roads"]];
+    const settled=await Promise.allSettled(variants.map(([extra,label])=>v14eDirectionsRequest({...base,...extra},label)));
+    return v14eDeduplicateCandidates(settled.flatMap(x=>x.status==="fulfilled"?x.value:[]));
+  }
+  if(mode==="walk") {
+    const req={origin,destination,travelMode:TravelMode?.WALKING||google.maps.TravelMode.WALKING,provideRouteAlternatives:true};
+    return v14eDeduplicateCandidates(await v14eDirectionsRequest(req,"Walking"));
+  }
+  if(mode==="transit") {
+    const preferences=[
+      [{departureTime:now},"Recommended"],
+      [{departureTime:now,routingPreference:TransitRoutePreference?.FEWER_TRANSFERS||google.maps.TransitRoutePreference?.FEWER_TRANSFERS},"Fewer transfers"],
+      [{departureTime:now,routingPreference:TransitRoutePreference?.LESS_WALKING||google.maps.TransitRoutePreference?.LESS_WALKING},"Less walking"],
+      [{departureTime:now,modes:[TransitMode?.SUBWAY||google.maps.TransitMode?.SUBWAY,TransitMode?.RAIL||google.maps.TransitMode?.RAIL,TransitMode?.TRAIN||google.maps.TransitMode?.TRAIN]},"Rail / Metro"],
+      [{departureTime:now,modes:[TransitMode?.BUS||google.maps.TransitMode?.BUS]},"Bus preference"]
+    ];
+    const settled=await Promise.allSettled(preferences.map(([transitOptions,label])=>v14eDirectionsRequest({origin,destination,travelMode:TravelMode?.TRANSIT||google.maps.TravelMode.TRANSIT,provideRouteAlternatives:true,transitOptions},label)));
+    return v14eDeduplicateCandidates(settled.flatMap(x=>x.status==="fulfilled"?x.value:[]));
+  }
+  return [];
+}
+function v14eTaxiEstimate(candidate) {
+  const km=candidate.distance/1000, min=candidate.duration/60, city=currentCityId;
+  if(city==="rome") { const h=new Date().getHours(), weekend=[0,6].includes(new Date().getDay());const start=h>=22||h<6?7.5:weekend?5:3.5;const slow=Math.max(0,min-(km/20*60));const fare=Math.max(9,start+km*1.42+slow*(32/60));return `≈ €${fare.toFixed(0)}–€${Math.ceil(fare*1.18)}`; }
+  if(city==="istanbul") { const fare=Math.max(210,65.4+km*43.56+Math.max(0,min-km/12.5*60)*(544.45/60));return `≈ ₺${Math.round(fare/10)*10}`; }
+  if(city==="izmir") { const fare=Math.max(180,34.5+km*49.5+Math.max(0,min-km/15*60)*(207/60));return `≈ ₺${Math.round(fare/10)*10}`; }
+  // London: interpolate current TfL typical black-cab ranges; traffic is already reflected in candidate duration.
+  const miles=km/1.60934; const pts=[[1,10.7],[2,16.4],[4,26],[6,38]]; let fare=4.4;
+  if(miles<=1) fare=4.4+(10.7-4.4)*miles; else if(miles<=2) fare=10.7+(16.4-10.7)*(miles-1); else if(miles<=4) fare=16.4+(26-16.4)*(miles-2)/2; else if(miles<=6) fare=26+(38-26)*(miles-4)/2; else fare=38+(miles-6)*4.4;
+  fare*=1+Math.min(.28,Math.max(0,min-(miles/15*60))/60*.25); return `≈ £${Math.max(4.4,fare).toFixed(0)}–£${Math.ceil(Math.max(5,fare)*1.25)}`;
+}
+async function v14eTaxiRanks() {
+  const node=el("navigation-taxi-ranks"); node.classList.add("hidden"); node.innerHTML="";
+  try {
+    const {Place}=await google.maps.importLibrary("places");
+    const req={textQuery:`taxi stand near ${CITY_CONFIG[currentCityId].name}`,fields:["displayName","formattedAddress","location"],locationBias:{center:v14eNavigation.origin,radius:5000},language:getActiveCityConfig().language||"en"};
+    const {places=[]}=await Place.searchByText(req); const ranks=places.slice(0,4); if(!ranks.length)return;
+    node.innerHTML=`<div class="info-section-title">NEARBY TAXI RANKS / OPERATORS</div>${ranks.map(p=>`<div class="taxi-rank-row"><b>${escapeHtml(p.displayName||"Taxi")}</b><small>${escapeHtml(p.formattedAddress||"")}</small></div>`).join("")}`; node.classList.remove("hidden");
+  } catch(err) { console.debug("Taxi rank lookup unavailable",err); }
+}
+function v14eDrawCandidate(index) {
+  v14eClearNavPolylines(); const c=v14eNavigation.candidates[index]; if(!c)return; v14eNavigation.selectedIndex=index;
+  const color=v14eNavigation.mode==="walk"?"#F7F9FC":v14eNavigation.mode==="taxi"?"#FFD05A":v14eNavigation.mode==="transit"?"#9A7BFF":"#5BA8FF";
+  const halo=new google.maps.Polyline({map,path:c.path,strokeColor:"#07101B",strokeOpacity:.9,strokeWeight:10,zIndex:95,clickable:false});
+  const main=new google.maps.Polyline({map,path:c.path,strokeColor:color,strokeOpacity:1,strokeWeight:5.5,zIndex:96,clickable:false}); v14eNavPolylines.push(halo,main);
+  const bounds=new google.maps.LatLngBounds(); c.path.forEach(p=>bounds.extend(p)); if(!bounds.isEmpty())map.fitBounds(bounds,60);
+  document.querySelectorAll(".navigation-result").forEach((n,i)=>n.classList.toggle("active",i===index));
+}
+function v14eRenderNavigationResults() {
+  const node=el("navigation-results"), mode=v14eNavigation.mode;
+  if(!v14eNavigation.candidates.length){node.innerHTML=`<div class="empty-state">No route alternatives returned for this mode.</div>`;return;}
+  node.innerHTML=v14eNavigation.candidates.map((c,i)=>{
+    const extras=mode==="transit"?`${c.transfers} transfer${c.transfers===1?"":"s"}${c.walk?` · ${v14eFormatDistance(c.walk)} walk`:""}`:mode==="taxi"?`${v14eTaxiEstimate(c)} estimated fare`:c.source;
+    return `<button class="navigation-result ${i===0?"active":""}" data-nav-route="${i}"><span class="navigation-rank">${i+1}</span><span class="navigation-result-main"><b>${i===0?"Best · ":""}${escapeHtml(c.summary||c.source||"Route")}</b><small>${escapeHtml(extras||"")}</small></span><span class="navigation-result-time"><b>${v14eFormatDuration(c.duration)}</b><small>${v14eFormatDistance(c.distance)}</small></span></button>`;
+  }).join("");
+  node.querySelectorAll("[data-nav-route]").forEach(btn=>btn.addEventListener("click",()=>v14eDrawCandidate(Number(btn.dataset.navRoute))));
+  v14eDrawCandidate(0);
+}
+async function v14eCalculateNavigation(mode) {
+  if(mode==="custom") {
+    const origin=v14eNavigation.origin,dest=v14eNavigation.destination; v14eCloseNavigation(false); await Promise.resolve(openRouteEditor());
+    el("route-name-input").value=`${origin.name} → ${dest.name}`;
+    routeEditorSegments=[normalizeRouteSegment({mode:"walk",service:`Walk · ${origin.name} → ${dest.name}`,walkStartName:origin.name,walkStartLat:origin.lat,walkStartLng:origin.lng,walkEndName:dest.name,walkEndLat:dest.lat,walkEndLng:dest.lng})]; renderRouteEditorSegments(); bringPanelToFront?.(el("route-editor-sheet")); return;
+  }
+  v14eNavigation.mode=mode; document.querySelectorAll("[data-nav-mode]").forEach(b=>b.classList.toggle("active",b.dataset.navMode===mode));
+  el("navigation-status").textContent=`Calculating ${mode==="drive"?"traffic-aware car":mode==="transit"?"public transport":mode==="walk"?"walking":"traffic-aware taxi"} routes…`;
+  el("navigation-results").innerHTML=`<div class="navigation-loading">Finding the best alternatives…</div>`;
+  try {
+    v14eNavigation.candidates=await v14eBuildCandidates(mode);
+    el("navigation-status").textContent=`${v14eNavigation.candidates.length} route option${v14eNavigation.candidates.length===1?"":"s"}, fastest first.${v14eNavigation.candidates.length<10?" Google may return fewer than 10 distinct routes.":""}`;
+    v14eRenderNavigationResults(); if(mode==="taxi")v14eTaxiRanks(); else el("navigation-taxi-ranks").classList.add("hidden");
+  } catch(err) {
+    console.warn("Navigation unavailable",err); el("navigation-results").innerHTML=""; el("navigation-status").textContent="Routing is not enabled for this Google Maps project yet. Enable the Google routing/Directions service to use automatic navigation."; showToast("Automatic routing is not enabled for this key yet.",3200);
+  }
+}
+
+el("navigation-close")?.addEventListener("click",()=>v14eCloseNavigation());
+document.querySelectorAll("[data-nav-mode]").forEach(button=>button.addEventListener("click",()=>v14eCalculateNavigation(button.dataset.navMode)));
+el("navigation-use-location")?.addEventListener("click",async()=>{try{const p=await getCurrentPositionOnce();v14eNavigation.origin={lat:p.coords.latitude,lng:p.coords.longitude,name:"Current location"};el("navigation-origin-name").textContent="Current location";showToast("Navigation origin updated.");}catch(err){showToast(locationErrorMessage(err),3000);}});
+el("navigation-destination-centre")?.addEventListener("click",()=>{const c=map.getCenter();v14eNavigation.destination={lat:c.lat(),lng:c.lng(),name:"Map centre"};el("navigation-destination-name").textContent="Map centre";showToast("Destination set to map centre.");});
+enablePanelDrag?.(el("navigation-sheet"));
+
+/* Add button's Create Route now opens the 5-mode navigation entrance. */
+const handleAddMethodV14EBase = handleAddMethod;
+handleAddMethod = async function(method) { if(method==="navigate"){closeAddSheet(false);v14eOpenNavigation();return;} return handleAddMethodV14EBase(method); };
+
+/* Frequent favorite info gets Directions. */
+showPlaceInfo = function(place) {
+  const content=el("detail-content"),category=canonicalFavoriteCategory(place.category,place.name),isTransport=category==="Transport",profile=isTransport?stationProfile(place.name,[]):null;
+  content.innerHTML=`<div class="detail-label">${escapeHtml(category.toUpperCase())}</div><h2>${escapeHtml(place.name)}</h2><div class="sub">${escapeHtml(place.note||"Favorite place")}</div>${profile?`<div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(profile.about)}</p></div><div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>${escapeHtml(profile.background)}</p></div>`:""}<div class="detail-section"><div class="info-row"><span>Category</span><b>${escapeHtml(category)}</b></div><div class="info-row"><span>Map label</span><b>${place.anchor||place.important?"Important · always named":"Standard"}</b></div></div><div class="detail-actions place-action-row"><button class="primary-btn compact-btn" id="favorite-directions-btn">Directions</button><button class="mini-edit-btn" id="edit-place-btn">Edit</button><button class="mini-danger-soft" id="delete-place-btn">Delete</button></div>`;
+  content.querySelector("#favorite-directions-btn")?.addEventListener("click",()=>v14eOpenNavigation({lat:place.lat,lng:place.lng,name:place.name}));
+  content.querySelector("#edit-place-btn")?.addEventListener("click",()=>openPlaceEditorForEdit(place));content.querySelector("#delete-place-btn")?.addEventListener("click",()=>deleteFrequentPlace(place.id));openDetail();
+};
+
+/* POI cards: Google photo if present; generic clearly-labelled category image otherwise. */
+v14d1PoiPanel = function({name,type,address,hours,status,photoUrl,loc,source}) {
+  const content=el("detail-content"),category=v14dPoiCategory(type),exact=!!photoUrl,hero=photoUrl||v14eGenericPhoto(name,type);
+  content.innerHTML=`<div class="detail-label">${escapeHtml(String(type||"PLACE").toUpperCase())}</div><h2>${escapeHtml(name||"Map place")}</h2><div class="sub">${escapeHtml(address||CITY_CONFIG[currentCityId].name)}</div><div class="poi-photo-wrap"><img class="poi-photo" src="${escapeHtml(hero)}" alt="${escapeHtml(name||"Place")}" />${!exact?`<span class="poi-generic-badge">Generic ${escapeHtml(String(type||"place").toLowerCase())} image</span>`:""}</div><div class="detail-section">${status?`<div class="info-row"><span>Status</span><b>${escapeHtml(status)}</b></div>`:""}${hours?`<div class="poi-hours"><div class="info-section-title">OPENING HOURS</div><div class="poi-hours-line">${escapeHtml(hours)}</div></div>`:""}</div><div class="detail-section info-copy-section"><div class="info-section-title">WHAT IS IT?</div><p>${escapeHtml(`${name||"This place"} is mapped as ${String(type||"a place").toLowerCase()}.`)}</p>${source?`<div class="poi-source-note">Place information: ${escapeHtml(source)}</div>`:""}</div><div class="detail-actions compact-action-row"><button class="secondary-btn compact-btn" id="v14e-poi-favorite">Add to Favorites</button><button class="primary-btn compact-btn" id="v14e-poi-route">Directions</button></div>`;
+  content.querySelector("#v14e-poi-favorite")?.addEventListener("click",()=>openPlaceEditor(loc,name||"Saved place",address||"",category));
+  content.querySelector("#v14e-poi-route")?.addEventListener("click",()=>v14eOpenNavigation({...loc,name:name||"Destination"})); openDetail(); bringPanelToFront?.(el("detail-card"));
+};
+
+/* Favorite-route focus means ONLY the selected route, not the whole transport network. */
+function v14eHideAllTransportForRouteFocus() {
+  lineRenderings.forEach(x=>x.polyline.setVisible(false)); surfaceRenderings.forEach(x=>x.polyline.setVisible(false)); stationOverlays.forEach(x=>x.setVisible(false)); surfaceStationOverlays.forEach(x=>x.setVisible(false)); lineLabelOverlays.forEach(x=>x.setVisible(false)); surfaceLabelOverlays.forEach(x=>x.setVisible(false));
+  romeMetroRenderings.forEach(x=>x.polyline.setVisible(false)); romeSurfaceRenderings.forEach(x=>x.polyline.setVisible(false)); romeMetroStationOverlays.forEach(x=>x.setVisible(false)); romeSurfaceStationOverlays.forEach(x=>x.setVisible(false)); romeLineLabelOverlays.forEach(x=>x.setVisible(false));
+  for(const cityId of ["istanbul","izmir"]){const s=V14D_CITY_TRANSIT[cityId];s?.renderings.forEach(x=>x.polyline.setVisible(false));s?.stationOverlays.forEach(x=>x.setVisible(false));s?.labelOverlays.forEach(x=>x.setVisible(false));}
+}
+const applyLayerStateV14EBase = applyLayerState;
+applyLayerState = function() { applyLayerStateV14EBase(); const route=getActiveFavoriteRoute?.(); if(route && getRouteCityId(route)===currentCityId){v14eHideAllTransportForRouteFocus();refreshPreciseRouteHighlights?.();} v14dApplyCityTheme(); };
+
+/* City fallback geometry stays curved/smoothed without adding more runtime vertices. */
+function v14eSmoothFallbackCityGeometry(cityId) {
+  const state=V14D_CITY_TRANSIT[cityId]; if(!state||state.__v14eSmoothed)return; if(!String(state.source||"").toLowerCase().includes("bundled"))return;
+  for(const [id,paths] of state.geometry.entries()) state.geometry.set(id,paths.map(path=>path.length>2?v13fThinPath(path,Math.min(240,Math.max(80,path.length*2))):path)); state.__v14eSmoothed=true;
+}
+const ensureV14DCityTransitV14EBase = ensureV14DCityTransit;
+ensureV14DCityTransit = async function(cityId,force=false){const result=await ensureV14DCityTransitV14EBase(cityId,force);if(cityId==="istanbul"||cityId==="izmir")v14eSmoothFallbackCityGeometry(cityId);return result;};
+
+/* Sheets close-state includes Navigation. */
+const allOtherSheetsClosedV14EBase = allOtherSheetsClosed;
+allOtherSheetsClosed = function(exceptId){const ids=["detail-card","add-sheet","favorites-sheet","route-editor-sheet","place-editor-sheet","location-search-sheet","navigation-sheet"];return ids.filter(id=>id!==exceptId).every(id=>el(id)?.classList.contains("hidden"));};
+
+/* Keep UI synced after every city/toggle change. */
+const updateV14CityUIV14EBase = updateV14CityUI;
+updateV14CityUI = function(){updateV14CityUIV14EBase();v14dApplyCityTheme();v14eSyncBusPlaceholder();};
+v14dApplyCityTheme(); v14eSyncBusPlaceholder();
+
+console.info(`Our Cities Map ${V14E_VERSION} navigation + polish loaded`);
