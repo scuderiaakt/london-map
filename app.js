@@ -7183,3 +7183,394 @@ applyLayerState = function() {
 };
 
 console.info("v1.4D polish patch ready");
+
+/* ---------- v1.4D.1: Rome reliability, romantic welcome, POI fallback, Metrobüs, walk routing ---------- */
+const V14D1_VERSION = "1.4D.1";
+
+/* ----- Profile entrance: instant city under the welcome veil, then heart + arrival ----- */
+function v14d1EnsureHeartRain() {
+  let rain = document.getElementById("welcome-heart-rain");
+  if (rain) return rain;
+  rain = document.createElement("div");
+  rain.id = "welcome-heart-rain";
+  rain.className = "welcome-heart-rain";
+  for (let i = 0; i < 34; i++) {
+    const heart = document.createElement("span");
+    heart.className = "welcome-heart-drop";
+    heart.textContent = "♥";
+    const left = (i * 37.17 + 7) % 100;
+    const size = 17 + ((i * 19) % 28);
+    const delay = ((i * 41) % 460) / 1000;
+    const duration = 1.05 + ((i * 23) % 70) / 100;
+    const drift = -42 + ((i * 31) % 84);
+    heart.style.left = `${left}%`;
+    heart.style.fontSize = `${size}px`;
+    heart.style.setProperty("--delay", `${delay}s`);
+    heart.style.setProperty("--duration", `${duration}s`);
+    heart.style.setProperty("--drift", `${drift}px`);
+    rain.appendChild(heart);
+  }
+  document.body.appendChild(rain);
+  return rain;
+}
+
+async function v14d1PlaceProfileCityInstantly(target) {
+  if (!map || !CITY_CONFIG[target]) return;
+  if (currentCityId !== target) {
+    saveCurrentCityLayerMemory();
+    clearFavoriteRouteFocus?.();
+    transientTransportSelection = null;
+    persistentTransportFocus = null;
+    closeDetail?.();
+    closeFavoritesSheet?.(false);
+    currentCityId = target;
+    localStorage.setItem(V14_ACTIVE_CITY_STORAGE, currentCityId);
+    restoreCityLayerMemory(currentCityId);
+  }
+  v14dSetVanilla(target);
+  layerState.bus = false;
+  map.moveCamera({ center: CITY_CONFIG[target].center, zoom: CITY_CONFIG[target].zoom });
+  applyLayerState();
+  applyFavoriteCategoryVisibility();
+  updateV14CityUI();
+  hideSearchResults?.();
+  if (el("search-input")) el("search-input").value = "";
+  toggleLayersPanel(false);
+  v14dApplyCityTheme();
+  v14d1SyncBusButton();
+}
+
+v14dRunProfileStart = async function(profile, { showWelcomeEffect = false } = {}) {
+  if (!map) { v14dPendingProfile = profile; return; }
+  const target = profile === "ela" ? "rome" : "london";
+  localStorage.setItem(V14D_PROFILE_STORAGE, profile);
+  await v14d1PlaceProfileCityInstantly(target);
+
+  if (showWelcomeEffect) {
+    const screen = el("welcome-screen");
+    screen?.classList.add("leaving");
+    if (profile === "ela") {
+      const rain = v14d1EnsureHeartRain();
+      const heart = el("welcome-heart");
+      rain.classList.remove("show");
+      heart?.classList.remove("show");
+      void rain.offsetWidth;
+      rain.classList.add("show");
+      heart?.classList.add("show");
+      await v14dSleep(1080);
+      rain.classList.remove("show");
+      heart?.classList.remove("show");
+    } else {
+      await v14dSleep(460);
+    }
+    screen?.classList.add("hidden");
+    screen?.classList.remove("leaving");
+  }
+
+  // The destination map is already underneath the welcome screen, so the title appears immediately.
+  if (profile === "ela") showCityArrival({ ...CITY_CONFIG.rome, gesture: "Ela ❤️" });
+  else showCityArrival({ ...CITY_CONFIG.london, gesture: "" });
+
+  // Heavy city datasets load only after the vanilla map is visible.
+  if (target === "rome") {
+    ensureRomeCore().catch(() => {});
+    if (cityInfoState.districts || cityInfoState.weather) ensureRomeMunicipi().catch(() => {});
+  }
+};
+
+/* ----- Rome Municipi: always-available approximate fallback ----- */
+const V14D1_ROME_MUNICIPI = [
+  ["Municipio I", 41.8956, 12.4853], ["Municipio II", 41.9240, 12.5147],
+  ["Municipio III", 41.9630, 12.5280], ["Municipio IV", 41.9290, 12.5790],
+  ["Municipio V", 41.8890, 12.5660], ["Municipio VI", 41.8660, 12.6350],
+  ["Municipio VII", 41.8420, 12.5480], ["Municipio VIII", 41.8420, 12.4920],
+  ["Municipio IX", 41.7900, 12.4900], ["Municipio X", 41.7550, 12.3300],
+  ["Municipio XI", 41.8250, 12.4300], ["Municipio XII", 41.8700, 12.4300],
+  ["Municipio XIII", 41.9000, 12.4050], ["Municipio XIV", 41.9450, 12.3950],
+  ["Municipio XV", 41.9900, 12.4200]
+].map(([name, lat, lng]) => ({ name, position: { lat, lng } }));
+
+function v14d1ClipHalfPlane(poly, nx, ny, c) {
+  const result = [];
+  const inside = p => nx * p[0] + ny * p[1] <= c + 1e-12;
+  const intersect = (a, b) => {
+    const da = nx * a[0] + ny * a[1] - c, db = nx * b[0] + ny * b[1] - c;
+    const t = da / (da - db || 1e-12);
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  };
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], ia = inside(a), ib = inside(b);
+    if (ia && ib) result.push(b);
+    else if (ia && !ib) result.push(intersect(a, b));
+    else if (!ia && ib) result.push(intersect(a, b), b);
+  }
+  return result;
+}
+
+function v14d1RomeApproxMunicipiGeoJson() {
+  const cosLat = Math.cos(41.90 * Math.PI / 180);
+  const west = 12.25 * cosLat, east = 12.73 * cosLat, south = 41.73, north = 42.08;
+  const centers = V14D1_ROME_MUNICIPI.map(item => [item.position.lng * cosLat, item.position.lat]);
+  return {
+    type: "FeatureCollection",
+    features: centers.map((ci, index) => {
+      let poly = [[west,south],[east,south],[east,north],[west,north]];
+      centers.forEach((cj, j) => {
+        if (j === index || !poly.length) return;
+        const nx = 2 * (cj[0] - ci[0]), ny = 2 * (cj[1] - ci[1]);
+        const c = cj[0]*cj[0] + cj[1]*cj[1] - ci[0]*ci[0] - ci[1]*ci[1];
+        poly = v14d1ClipHalfPlane(poly, nx, ny, c);
+      });
+      const ring = poly.map(([x,y]) => [x / cosLat, y]);
+      if (ring.length && (ring[0][0] !== ring[ring.length-1][0] || ring[0][1] !== ring[ring.length-1][1])) ring.push([...ring[0]]);
+      return { type:"Feature", properties:{ MUNICIPIO:String(index+1), __approx:true }, geometry:{ type:"Polygon", coordinates:[ring] } };
+    })
+  };
+}
+
+function v14d1BuildApproxRomeMunicipi() {
+  if (romeMunicipiLayer) romeMunicipiLayer.setMap(null);
+  romeMunicipiLayer = new google.maps.Data();
+  const features = romeMunicipiLayer.addGeoJson(v14d1RomeApproxMunicipiGeoJson());
+  features.forEach((feature, index) => feature.setProperty("__romeColor", romeMunicipioShade(index)));
+  romeMunicipiCentroids = V14D1_ROME_MUNICIPI.map(item => ({ ...item }));
+  romeMunicipiReady = true;
+  rebuildRomeMunicipioLabels();
+  applyRomeCityInfoState();
+}
+
+const ensureRomeMunicipiV14D1Network = ensureRomeMunicipi;
+ensureRomeMunicipi = async function(force = false) {
+  if (romeMunicipiReady && !force) return;
+  const cached = !force ? getCache(`${ROME_CACHE_PREFIX}municipi`) : null;
+  if (cached) {
+    try { await ensureRomeMunicipiV14D1Network(force); if (romeMunicipiCentroids.length >= 10) return; } catch {}
+  }
+  // Reliable local approximation: 15 official Municipio identities, approximate spatial cells.
+  v14d1BuildApproxRomeMunicipi();
+};
+
+async function v14d1FetchOpenMeteo(points, currentFields, timezone) {
+  const lats = points.map(p => p.lat.toFixed(5)).join(","), lngs = points.map(p => p.lng.toFixed(5)).join(",");
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lats)}&longitude=${encodeURIComponent(lngs)}&current=${encodeURIComponent(currentFields)}&temperature_unit=celsius&wind_speed_unit=kmh&timezone=${encodeURIComponent(timezone)}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Open-Meteo ${response.status}`);
+  let data = await response.json();
+  if (!Array.isArray(data)) data = [data];
+  if (data.length === 1 && points.length > 1) data = points.map(() => data[0]);
+  return data;
+}
+
+ensureRomeWeather = async function(force = false) {
+  if (!romeMunicipiReady) await ensureRomeMunicipi();
+  if (!force && romeMunicipiWeather.size === romeMunicipiCentroids.length) return;
+  if (romeWeatherPromise && !force) return romeWeatherPromise;
+  romeWeatherPromise = (async () => {
+    const coords = romeMunicipiCentroids;
+    const data = await v14d1FetchOpenMeteo(coords.map(x => x.position), "temperature_2m,weather_code,wind_speed_10m,wind_direction_10m", "Europe/Rome");
+    romeMunicipiWeather = new Map();
+    coords.forEach((item, index) => {
+      const current = data[index]?.current || data[0]?.current || {};
+      romeMunicipiWeather.set(item.name, {
+        temperature: Number(current.temperature_2m),
+        windSpeed: Number(current.wind_speed_10m),
+        windDirection: Number(current.wind_direction_10m),
+        ...weatherCodeInfo(current.weather_code)
+      });
+    });
+    refreshRomeMunicipioLabels();
+  })().catch(err => {
+    console.warn("Rome weather unavailable", err);
+    showToast("Rome weather is temporarily unavailable.", 3000);
+  }).finally(() => romeWeatherPromise = null);
+  return romeWeatherPromise;
+};
+
+function v14d1RomeWindGrid() {
+  const points = [], rows = 6, cols = 8, south = 41.74, north = 42.07, west = 12.27, east = 12.71;
+  for (let r=0;r<rows;r++) for (let c=0;c<cols;c++) points.push({lat:south+(north-south)*(r+.5)/rows,lng:west+(east-west)*(c+.5)/cols});
+  return points;
+}
+ensureRomeWind = async function(force = false) {
+  if (romeWindPromise && !force) return romeWindPromise;
+  if (force) clearRomeWind();
+  if (!force && romeWindOverlays.length >= 20) { applyRomeCityInfoState(); return; }
+  clearRomeWind();
+  romeWindPromise = (async () => {
+    const points = v14d1RomeWindGrid();
+    const data = await v14d1FetchOpenMeteo(points, "wind_speed_10m,wind_direction_10m", "Europe/Rome");
+    ensureWindArrowOverlayClass();
+    points.forEach((position,index) => {
+      const current = data[index]?.current || data[0]?.current || {};
+      const overlay = new window.__V13FWindArrowOverlay(position, Number(current.wind_speed_10m)||0, Number(current.wind_direction_10m)||0);
+      overlay.setMap(map);
+      overlay.setVisible(currentCityId === "rome" && cityInfoState.wind);
+      romeWindOverlays.push(overlay);
+    });
+  })().catch(err => {
+    console.warn("Rome wind unavailable", err);
+    showToast("Rome wind is temporarily unavailable.", 3000);
+  }).finally(() => romeWindPromise = null);
+  return romeWindPromise;
+};
+
+/* ----- POI details: Google Places first; useful OSM fallback when Places is disabled ----- */
+async function v14d1OsmReverse(lat, lng) {
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1&extratags=1&namedetails=1&accept-language=${encodeURIComponent(getActiveCityConfig().language || "en")}`;
+  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`OSM reverse ${response.status}`);
+  return response.json();
+}
+function v14d1SafeImage(url) { return /^https?:\/\//i.test(String(url||"")) ? String(url) : ""; }
+function v14d1PoiPanel({ name, type, address, hours, status, photoUrl, loc, source }) {
+  const content = el("detail-content");
+  const category = v14dPoiCategory(type);
+  content.innerHTML = `<div class="detail-label">${escapeHtml(String(type||"PLACE").toUpperCase())}</div><h2>${escapeHtml(name||"Map place")}</h2><div class="sub">${escapeHtml(address||CITY_CONFIG[currentCityId].name)}</div>${photoUrl?`<img class="poi-photo" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name||"Place")}" />`:""}<div class="detail-section">${status?`<div class="info-row"><span>Status</span><b>${escapeHtml(status)}</b></div>`:""}${hours?`<div class="poi-hours"><div class="info-section-title">OPENING HOURS</div><div class="poi-hours-line">${escapeHtml(hours)}</div></div>`:""}</div><div class="detail-section info-copy-section"><div class="info-section-title">WHAT IS IT?</div><p>${escapeHtml(`${name||"This place"} is mapped as ${String(type||"a place").toLowerCase()}.`)}</p>${source?`<div class="poi-source-note">Place information: ${escapeHtml(source)}</div>`:""}</div><div class="detail-actions compact-action-row"><button class="secondary-btn compact-btn" id="v14d1-poi-favorite">Add to Favorites</button><button class="primary-btn compact-btn" id="v14d1-poi-route">Route here</button></div>`;
+  content.querySelector("#v14d1-poi-favorite")?.addEventListener("click",()=>openPlaceEditor(loc,name||"Saved place",address||"",category));
+  content.querySelector("#v14d1-poi-route")?.addEventListener("click",()=>{
+    const center=lastUserPosition?.coords?{lat:lastUserPosition.coords.lat,lng:lastUserPosition.coords.lng}:{lat:map.getCenter().lat(),lng:map.getCenter().lng()};
+    startRouteWithSegment({mode:"walk",walkStartName:lastUserPosition?.coords?"Current location":"Map centre",walkStartLat:center.lat,walkStartLng:center.lng,walkEndName:name||"Destination",walkEndLat:loc.lat,walkEndLng:loc.lng,service:`Walk to ${name||"destination"}`});
+  });
+}
+
+v14dShowPoi = async function(placeId, latLng) {
+  if (v14dPoiBusy) return;
+  v14dPoiBusy = true;
+  const content = el("detail-content");
+  content.innerHTML = `<div class="detail-label">PLACE</div><h2>Loading place…</h2><div class="poi-loading">Looking up the useful details.</div>`;
+  openDetail(); bringPanelToFront(el("detail-card"));
+  const fallbackLoc = { lat:latLng.lat(), lng:latLng.lng() };
+  try {
+    const {Place}=await google.maps.importLibrary("places");
+    const place=new Place({id:placeId,requestedLanguage:getActiveCityConfig().language||"en"});
+    await place.fetchFields({fields:["displayName","formattedAddress","location","primaryTypeDisplayName","currentOpeningHours","regularOpeningHours","photos","businessStatus"]});
+    const loc=place.location?{lat:place.location.lat(),lng:place.location.lng()}:fallbackLoc;
+    const photo=place.photos?.[0];
+    v14d1PoiPanel({name:place.displayName||"Map place",type:place.primaryTypeDisplayName||"Place",address:place.formattedAddress||"",hours:v14dPoiHours(place),status:String(place.businessStatus||"").replaceAll("_"," ").toLowerCase(),photoUrl:photo?.getURI?.({maxWidth:700,maxHeight:420})||"",loc,source:"Google Maps"});
+  } catch (googleError) {
+    console.warn("Google Place details unavailable; using map-data fallback", googleError);
+    try {
+      const osm = await v14d1OsmReverse(fallbackLoc.lat, fallbackLoc.lng);
+      const name = osm.namedetails?.name || osm.name || String(osm.display_name||"").split(",")[0] || "Map place";
+      const type = osm.type || osm.category || osm.addresstype || "Place";
+      const hours = osm.extratags?.opening_hours || "";
+      const photoUrl = v14d1SafeImage(osm.extratags?.image || osm.extratags?.['image:0']);
+      v14d1PoiPanel({name,type,address:osm.display_name||"",hours,status:"",photoUrl,loc:fallbackLoc,source:"OpenStreetMap fallback"});
+    } catch (fallbackError) {
+      console.warn("POI fallback unavailable", fallbackError);
+      v14d1PoiPanel({name:"Map place",type:"Place",address:`${fallbackLoc.lat.toFixed(5)}, ${fallbackLoc.lng.toFixed(5)}`,hours:"",status:"",photoUrl:"",loc:fallbackLoc,source:"map coordinate"});
+    }
+  } finally { v14dPoiBusy = false; }
+};
+
+/* ----- Walk segments follow walkable streets instead of a straight chord ----- */
+const v14d1WalkRouteCache = new Map();
+const v14d1WalkRoutePending = new Map();
+function v14d1WalkKey(segment) {
+  return [segment.walkStartLat,segment.walkStartLng,segment.walkEndLat,segment.walkEndLng].map(v=>Number(v).toFixed(5)).join("|");
+}
+function v14d1StraightWalk(segment) { return v14cWalkPath(segment); }
+async function v14d1FetchWalkingPath(segment) {
+  const key=v14d1WalkKey(segment); if(v14d1WalkRouteCache.has(key))return v14d1WalkRouteCache.get(key);if(v14d1WalkRoutePending.has(key))return v14d1WalkRoutePending.get(key);
+  const pending=(async()=>{
+    const origin={lat:Number(segment.walkStartLat),lng:Number(segment.walkStartLng)},destination={lat:Number(segment.walkEndLat),lng:Number(segment.walkEndLng)};
+    try {
+      const {DirectionsService,TravelMode}=await google.maps.importLibrary("routes");
+      const service=new DirectionsService();
+      const result=await service.route({origin,destination,travelMode:TravelMode?.WALKING||google.maps.TravelMode.WALKING,provideRouteAlternatives:false});
+      const route=result?.routes?.[0];
+      const raw=route?.overview_path||route?.overviewPath||[];
+      const path=raw.map(p=>({lat:typeof p.lat==="function"?p.lat():p.lat,lng:typeof p.lng==="function"?p.lng():p.lng})).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));
+      if(path.length>1){v14d1WalkRouteCache.set(key,path);return path;}
+    } catch(err) { console.warn("Google walking route unavailable; trying pedestrian OSM router",err); }
+    try {
+      const url=`https://routing.openstreetmap.de/routed-foot/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&steps=false`;
+      const res=await fetch(url); if(!res.ok)throw new Error(`Foot router ${res.status}`); const data=await res.json();
+      const coords=data?.routes?.[0]?.geometry?.coordinates||[];const path=coords.map(([lng,lat])=>({lat:Number(lat),lng:Number(lng)})).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));
+      if(path.length>1){v14d1WalkRouteCache.set(key,path);return path;}
+    } catch(err){console.warn("Pedestrian OSM router unavailable",err);}
+    const fallback=v14d1StraightWalk(segment);v14d1WalkRouteCache.set(key,fallback);return fallback;
+  })().finally(()=>v14d1WalkRoutePending.delete(key));
+  v14d1WalkRoutePending.set(key,pending);return pending;
+}
+
+function v14d1DrawWalkPath(path, options={}) {
+  if(path.length<2)return;
+  const halo=new google.maps.Polyline({map,path,strokeColor:"#0B1220",strokeOpacity:.84,strokeWeight:9,zIndex:88,clickable:false});
+  const walk=new google.maps.Polyline({map,path,strokeColor:"#F4F7FB",strokeOpacity:1,strokeWeight:4,zIndex:89,clickable:false,icons:[{icon:{path:"M 0,-1 0,1",strokeOpacity:1,scale:3},offset:"0",repeat:"14px"}]});
+  routeHighlightPolylines.push(halo,walk);
+}
+renderRouteHighlights = function(segments,options={}) {
+  clearRouteHighlights(); if(!map)return;
+  for(const raw of segments||[]) {
+    const segment=normalizeRouteSegment(raw);
+    if(segment.mode==="walk") {
+      const key=v14d1WalkKey(segment);const path=v14d1WalkRouteCache.get(key)||v14d1StraightWalk(segment);v14d1DrawWalkPath(path,options);
+      if(!v14d1WalkRouteCache.has(key)&&!v14d1WalkRoutePending.has(key))v14d1FetchWalkingPath(segment).then(()=>refreshPreciseRouteHighlights()).catch(()=>{});
+      continue;
+    }
+    const path=precisePathForSegment(segment); if(path.length<2)continue; const color=segmentColor(segment);
+    const halo=new google.maps.Polyline({map,path,strokeColor:"#FFFFFF",strokeOpacity:options.preview?.82:.94,strokeWeight:12,zIndex:88,clickable:false});
+    const glow=new google.maps.Polyline({map,path,strokeColor:color,strokeOpacity:1,strokeWeight:6.5,zIndex:89,clickable:false});
+    routeHighlightPolylines.push(halo,glow);
+  }
+};
+
+/* ----- İstanbul Metrobüs/BRT layer ----- */
+layerState.bus = !!layerState.bus;
+const V14D1_METROBUS = {
+  id:"istanbul-bus-metrobus", city:"istanbul", ref:"BRT", code:"BRT", name:"Metrobüs", displayName:"BRT · Metrobüs", family:"bus", color:"#F26D2F", source:"Bundled Metrobüs corridor",
+  about:"İstanbul Metrobüs is the city's high-capacity bus rapid transit corridor, running on a mostly segregated alignment across the European side and over the Bosphorus to Söğütlüçeşme.",
+  background:"The corridor has expanded in stages since 2007 and functions as one of İstanbul's most heavily used cross-city public-transport backbones."
+};
+const V14D1_METROBUS_STOPS = [
+  ["Beylikdüzü Sondurak (TÜYAP)",41.0192,28.6238],["Beylikdüzü",41.0127,28.6420],["Haramidere",41.0061,28.6751],["Saadetdere",41.0000,28.6954],
+  ["Avcılar Merkez Üniversite Kampüsü",40.9918,28.7230],["Küçükçekmece",40.9949,28.7744],["Sefaköy",40.9986,28.8002],["Yenibosna",40.9915,28.8354],
+  ["Şirinevler",40.9900,28.8450],["İncirli",40.9972,28.8718],["Zeytinburnu",41.0006,28.9074],["Merter",41.0075,28.8968],
+  ["Cevizlibağ",41.0184,28.9087],["Topkapı",41.0218,28.9280],["Edirnekapı",41.0347,28.9347],["Ayvansaray–Eyüpsultan",41.0384,28.9388],
+  ["Halıcıoğlu",41.0492,28.9471],["Okmeydanı",41.0628,28.9700],["Darülaceze–Perpa",41.0668,28.9792],["Çağlayan",41.0715,28.9810],
+  ["Mecidiyeköy",41.0666,28.9931],["Zincirlikuyu",41.0675,29.0147],["15 Temmuz Şehitler Köprüsü",41.0444,29.0340],["Burhaniye",41.0319,29.0450],
+  ["Altunizade",41.0218,29.0436],["Acıbadem",41.0036,29.0554],["Uzunçayır",40.9994,29.0633],["Fikirtepe",40.9949,29.0508],["Söğütlüçeşme",40.9914,29.0378]
+];
+function v14d1InjectMetrobus() {
+  const state=V14D_CITY_TRANSIT.istanbul;if(!state||state.lineById.has(V14D1_METROBUS.id))return false;
+  state.lineById.set(V14D1_METROBUS.id,V14D1_METROBUS);state.geometry.set(V14D1_METROBUS.id,[V14D1_METROBUS_STOPS.map(([,lat,lng])=>({lat,lng}))]);
+  for(const [name,lat,lng] of V14D1_METROBUS_STOPS){const id=v14dCityStationId("istanbul",name,lat,lng);const station=state.stations.get(id)||{id,city:"istanbul",name,lat,lon:lng,services:[]};if(!station.services.some(x=>x.id===V14D1_METROBUS.id))station.services.push(V14D1_METROBUS);state.stations.set(id,station);}return true;
+}
+const ensureV14DCityTransitV14D1Base=ensureV14DCityTransit;
+ensureV14DCityTransit=async function(cityId,force=false){const state=await ensureV14DCityTransitV14D1Base(cityId,force);if(cityId==="istanbul"&&v14d1InjectMetrobus())v14dRenderCityTransit("istanbul");return state;};
+
+const v14dRenderPathV14D1Base=v14dRenderPath;
+v14dRenderPath=function(line,path,state){
+  if(line.family!=="bus")return v14dRenderPathV14D1Base(line,path,state);
+  const raw=v13fThinPath(path,220);if(raw.length<2)return;
+  const casing=new google.maps.Polyline({map,path:raw,strokeColor:"#FFF7EE",strokeOpacity:0,strokeWeight:8,zIndex:22,visible:false,clickable:false});
+  const main=new google.maps.Polyline({map,path:raw,strokeColor:line.color,strokeOpacity:0,strokeWeight:4.5,zIndex:23,visible:false,clickable:false});
+  const hit=new google.maps.Polyline({map,path:raw,strokeColor:line.color,strokeOpacity:.001,strokeWeight:20,zIndex:66,visible:false,clickable:true});
+  hit.addListener("click",()=>v14dSelectCityLine(line,{fit:false,showInfo:true}));state.renderings.push({polyline:casing,line,role:"bus-casing"},{polyline:main,line,role:"bus-main"},{polyline:hit,line,role:"hit"});
+};
+const v14dApplyCityTransportStateV14D1Base=v14dApplyCityTransportState;
+v14dApplyCityTransportState=function(cityId){v14dApplyCityTransportStateV14D1Base(cityId);if(cityId!=="istanbul")return;for(const item of V14D_CITY_TRANSIT.istanbul.renderings){if(item.line.family!=="bus"||!item.polyline.getVisible())continue;if(item.role==="bus-casing")item.polyline.setOptions({strokeOpacity:.82,strokeWeight:8});if(item.role==="bus-main")item.polyline.setOptions({strokeOpacity:1,strokeWeight:4.4});}};
+
+function v14d1SyncBusButton(){const button=el("panel-bus-toggle");if(!button)return;const istanbul=currentCityId==="istanbul";button.disabled=!istanbul;button.classList.toggle("active",istanbul&&!!layerState.bus);button.setAttribute("aria-pressed",String(istanbul&&!!layerState.bus));const label=button.querySelector(".panel-layer-label");if(label)label.textContent=istanbul?"Metrobüs":"Bus";button.title=istanbul?"Toggle İstanbul Metrobüs":"Bus layers arrive city-by-city";}
+const syncV13EPanelUIV14D1Base=syncV13EPanelUI;
+syncV13EPanelUI=function(){syncV13EPanelUIV14D1Base();v14d1SyncBusButton();};
+const saveCurrentCityLayerMemoryV14D1Base=saveCurrentCityLayerMemory;
+saveCurrentCityLayerMemory=function(){saveCurrentCityLayerMemoryV14D1Base();cityLayerMemory[currentCityId]=cityLayerMemory[currentCityId]||{};cityLayerMemory[currentCityId].bus=!!layerState.bus;try{localStorage.setItem(V14_CITY_LAYER_STATE_STORAGE,JSON.stringify(cityLayerMemory));}catch{}};
+const restoreCityLayerMemoryV14D1Base=restoreCityLayerMemory;
+restoreCityLayerMemory=function(cityId){restoreCityLayerMemoryV14D1Base(cityId);layerState.bus=cityId==="istanbul"?!!cityLayerMemory[cityId]?.bus:false;};
+const v14dSetVanillaV14D1Base=v14dSetVanilla;
+v14dSetVanilla=function(cityId){v14dSetVanillaV14D1Base(cityId);layerState.bus=false;};
+const toggleLayerV14D1Base=toggleLayer;
+toggleLayer=async function(name){if(name!=="bus")return toggleLayerV14D1Base(name);if(currentCityId!=="istanbul"){showToast("Metrobüs is available in İstanbul.");return;}activeFavoriteRouteId=null;transientTransportSelection=null;persistentTransportFocus=null;layerState.bus=!layerState.bus;if(layerState.bus)await ensureV14DCityTransit("istanbul");saveCurrentCityLayerMemory();applyLayerState();syncV13EPanelUI();};
+
+/* Update city UI/theme and keep Rome info layers visibly populated. */
+const updateV14CityUIV14D1Base=updateV14CityUI;
+updateV14CityUI=function(){updateV14CityUIV14D1Base();v14dApplyCityTheme();v14d1SyncBusButton();};
+const switchCityV14D1Base=switchCity;
+switchCity=async function(nextCityId,options={}){await switchCityV14D1Base(nextCityId,options);layerState.bus=nextCityId==="istanbul"?!!cityLayerMemory.istanbul?.bus:false;if(currentCityId==="rome"&&(cityInfoState.districts||cityInfoState.weather))await ensureRomeMunicipi().catch(()=>{});if(currentCityId==="rome"&&cityInfoState.weather)await ensureRomeWeather().catch(()=>{});if(currentCityId==="rome"&&cityInfoState.wind)await ensureRomeWind().catch(()=>{});v14dApplyCityTheme();v14d1SyncBusButton();applyLayerState();};
+
+CITY_CONFIG.rome.status="Rome ready · Metro / Rail / Tram + reliable approximate Municipi, weather and dense wind overlay.";
+CITY_CONFIG.istanbul.status="İstanbul ready · Metro / Marmaray / Tram / Metrobüs + city information.";
+
+console.info(`Our Cities Map ${V14D1_VERSION} hotfix loaded`);

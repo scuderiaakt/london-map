@@ -1953,3 +1953,115 @@ body.city-theme-rome .city-choice-ela.active {
   .welcome-profile { min-height: 88px; }
   .welcome-heart { font-size: min(64vw, 280px); }
 }
+
+
+/* ---------- v1.4D.1 hotfix: stronger Rome identity + romantic Ela entrance ---------- */
+body.city-theme-rome {
+  --accent: #40e0d0;
+  --accent2: #5f9ea0;
+  --panel: rgba(4, 36, 40, .94);
+  --panel-strong: rgba(3, 27, 31, .985);
+  --text: #f1fffd;
+  --muted: #9fd0cc;
+  --line: rgba(96, 229, 218, .20);
+  --city-accent: #40e0d0;
+  --city-accent-soft: rgba(48, 213, 200, .18);
+  --city-accent-border: rgba(64, 224, 208, .48);
+}
+body.city-theme-rome .layers-panel {
+  background:
+    radial-gradient(circle at 85% 5%, rgba(64,224,208,.11), transparent 34%),
+    linear-gradient(155deg, rgba(4,44,48,.985), rgba(3,26,31,.985) 57%, rgba(3,48,48,.96));
+  border-color: rgba(64,224,208,.24);
+  box-shadow: 0 20px 70px rgba(0,45,48,.58), inset 0 1px 0 rgba(150,255,246,.035);
+}
+body.city-theme-rome .layers-panel-head,
+body.city-theme-rome .layer-group { border-color: rgba(93,223,214,.15); }
+body.city-theme-rome .layer-group-title,
+body.city-theme-rome .detail-label,
+body.city-theme-rome .info-section-title { color: #76e8df; }
+body.city-theme-rome .layer-group-sub,
+body.city-theme-rome .city-data-status,
+body.city-theme-rome .layer-panel-footnote { color: #88b9b6; }
+body.city-theme-rome .panel-layer-toggle,
+body.city-theme-rome .city-choice,
+body.city-theme-rome .search-shell {
+  background: rgba(5, 32, 37, .80);
+  border-color: rgba(103, 206, 200, .16);
+}
+body.city-theme-rome .panel-layer-toggle:hover,
+body.city-theme-rome .city-choice:hover { background: rgba(13, 67, 70, .66); }
+body.city-theme-rome .panel-layer-toggle.active,
+body.city-theme-rome .city-choice.active {
+  background: linear-gradient(145deg, rgba(0,206,209,.22), rgba(48,213,200,.14));
+  border-color: rgba(64,224,208,.48);
+  box-shadow: inset 0 0 0 1px rgba(64,224,208,.05), 0 8px 26px rgba(0,139,139,.10);
+}
+body.city-theme-rome .layers-menu-btn {
+  background: linear-gradient(145deg, rgba(4,55,59,.96), rgba(3,34,39,.98));
+  color: #8ef2ea;
+  box-shadow: 0 10px 28px rgba(0,44,47,.42);
+}
+body.city-theme-rome .detail-card,
+body.city-theme-rome .modal-card {
+  background: linear-gradient(155deg, rgba(4,39,43,.97), rgba(3,24,30,.985));
+  border-color: rgba(64,224,208,.19);
+}
+
+/* Bigger red heart; turquoise remains an accent around it rather than replacing romance-red. */
+.welcome-heart {
+  font-size: min(64vw, 560px) !important;
+  color: #ff304f !important;
+  filter: drop-shadow(0 0 34px rgba(255,48,79,.56)) drop-shadow(0 0 100px rgba(255,48,79,.20)) !important;
+  z-index: 424;
+}
+.welcome-heart.show { animation: v14d1-heart 1.05s cubic-bezier(.18,.84,.24,1) both !important; }
+@keyframes v14d1-heart {
+  0% { opacity: 0; transform: translate(-50%,-50%) scale(.34) rotate(-7deg); }
+  22% { opacity: 1; transform: translate(-50%,-50%) scale(1.08) rotate(3deg); }
+  55% { opacity: 1; transform: translate(-50%,-50%) scale(.98) rotate(0deg); }
+  100% { opacity: 0; transform: translate(-50%,-50%) scale(1.34); }
+}
+.welcome-heart-rain {
+  position: fixed;
+  inset: 0;
+  z-index: 422;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+.welcome-heart-rain.show { opacity: 1; }
+.welcome-heart-drop {
+  position: absolute;
+  top: -14vh;
+  color: #ff4661;
+  text-shadow: 0 0 18px rgba(255,55,83,.38);
+  opacity: 0;
+  animation: v14d1-heart-rain var(--duration, 1.45s) ease-in var(--delay, 0s) forwards;
+}
+@keyframes v14d1-heart-rain {
+  0% { opacity: 0; transform: translate3d(0,-10vh,0) rotate(-15deg) scale(.65); }
+  12% { opacity: .90; }
+  85% { opacity: .72; }
+  100% { opacity: 0; transform: translate3d(var(--drift, 20px), 115vh,0) rotate(35deg) scale(1.08); }
+}
+
+/* Approximate Rome Municipio fallback is intentionally softer than exact boundaries. */
+body.city-theme-rome .rome-municipio-label {
+  border-color: rgba(106,228,219,.27);
+  background: rgba(3,31,35,.88);
+  box-shadow: 0 6px 22px rgba(0,41,44,.28);
+}
+body.city-theme-rome .wind-arrow-overlay { color: #9ff8ef; }
+
+/* Istanbul BRT/Metrobüs */
+#panel-bus-toggle .panel-layer-icon { font-size: 9px; letter-spacing: -.06em; }
+#panel-bus-toggle.active { background: rgba(242,109,47,.16); border-color: rgba(242,109,47,.36); }
+#panel-bus-toggle:disabled { opacity: .42; cursor: default; }
+
+/* POI fallback cards */
+.poi-source-note { color: var(--muted); font-size: 9px; margin-top: 8px; line-height: 1.45; }
+
+@media (max-width:700px) {
+  .welcome-heart { font-size: min(86vw, 430px) !important; }
+}
