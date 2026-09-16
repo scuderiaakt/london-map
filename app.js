@@ -3803,11 +3803,12 @@ function showExternalPlaceInfo(place) {
     <h2>${escapeHtml(place.name)}</h2>
     <div class="sub">${escapeHtml(place.typeLabel || "Place")}${place.address ? ` · ${escapeHtml(place.address)}` : ""}</div>
     <div class="detail-section"><div class="info-row"><span>Suggested category</span><b>${escapeHtml(place.category || "Other")}</b></div><div class="info-row"><span>Coordinates</span><b>${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}</b></div></div>
-    <div class="detail-actions compact-action-row"><button class="primary-btn compact-btn" id="external-save-place-btn">＋ Add to Favorites</button></div>`;
+    <div class="detail-actions compact-action-row"><button class="secondary-btn compact-btn" id="external-save-place-btn">＋ Add to Favorites</button><button class="primary-btn compact-btn" id="external-directions-btn">Directions</button></div>`;
   content.querySelector("#external-save-place-btn")?.addEventListener("click", () => {
     closeDetail(false);
     openPlaceEditor(coords, place.name, place.address || "", place.category || "Other");
   });
+  content.querySelector("#external-directions-btn")?.addEventListener("click",()=>v14eOpenNavigation({...coords,name:place.name||"Destination"}));
   openDetail();
 }
 
@@ -7961,3 +7962,315 @@ updateV14CityUI = function(){updateV14CityUIV14EBase();v14dApplyCityTheme();v14e
 v14dApplyCityTheme(); v14eSyncBusPlaceholder();
 
 console.info(`Our Cities Map ${V14E_VERSION} navigation + polish loaded`);
+
+/* ---------- v1.5: endpoint search, segment navigation, on-demand buses, airports ---------- */
+const V15_VERSION = "1.5";
+const V15_FLIGHT_SEARCH_STORAGE = "ourCities.favoriteFlightSearches.v1";
+const V15_TIMEZONES = {
+  london: "Europe/London",
+  rome: "Europe/Rome",
+  istanbul: "Europe/Istanbul",
+  izmir: "Europe/Istanbul"
+};
+const V15_AIRPORTS = {
+  london: [
+    {iata:"LHR",name:"Heathrow Airport",lat:51.4700,lng:-0.4543,primary:true},
+    {iata:"LGW",name:"Gatwick Airport",lat:51.1537,lng:-0.1821},
+    {iata:"STN",name:"Stansted Airport",lat:51.8860,lng:0.2389},
+    {iata:"LTN",name:"Luton Airport",lat:51.8747,lng:-0.3683},
+    {iata:"LCY",name:"London City Airport",lat:51.5053,lng:0.0553}
+  ],
+  rome: [
+    {iata:"FCO",name:"Leonardo da Vinci–Fiumicino Airport",lat:41.8003,lng:12.2389,primary:true},
+    {iata:"CIA",name:"Ciampino Airport",lat:41.7999,lng:12.5949}
+  ],
+  istanbul: [
+    {iata:"IST",name:"İstanbul Airport",lat:41.2753,lng:28.7519,primary:true},
+    {iata:"SAW",name:"Sabiha Gökçen Airport",lat:40.8986,lng:29.3092}
+  ],
+  izmir: [
+    {iata:"ADB",name:"Adnan Menderes Airport",lat:38.2924,lng:27.1570,primary:true}
+  ]
+};
+const V15_TRANSIT_FALLBACK_COLORS = ["#4BA3FF","#F15B6C","#42C7A5","#B77BFF","#FFB14E","#36C2D9","#E66CC2","#91C94D","#FF7C55"];
+
+/* ----- city clock ----- */
+function v15UpdateClock() {
+  const timeNode = el("city-clock-time"), dateNode = el("city-clock-date");
+  if (!timeNode || !dateNode) return;
+  const tz = V15_TIMEZONES[currentCityId] || "Europe/London";
+  const now = new Date();
+  try {
+    timeNode.textContent = new Intl.DateTimeFormat("en-GB", { timeZone:tz, hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false }).format(now);
+    dateNode.textContent = new Intl.DateTimeFormat("en-GB", { timeZone:tz, weekday:"short", day:"2-digit", month:"short" }).format(now);
+  } catch {
+    timeNode.textContent = now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"});
+    dateNode.textContent = now.toLocaleDateString([], {weekday:"short",day:"2-digit",month:"short"});
+  }
+}
+setInterval(v15UpdateClock, 1000);
+v15UpdateClock();
+
+/* ----- İzmir gets its own pink identity ----- */
+const v14dApplyCityThemeV15Base = v14dApplyCityTheme;
+v14dApplyCityTheme = function() {
+  v14dApplyCityThemeV15Base();
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta && currentCityId === "izmir") meta.content = "#3a122c";
+  v15UpdateClock();
+};
+
+/* ----- Airport markers ----- */
+let v15AirportOverlays = [];
+function v15PlaneSvg() {
+  return `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 30.5 27 35l-9 12 6 2 14-11 11 3-2 11 5 3 7-16-5-7 5-16-5 3 2 11-11 3L24 26 18 28l9 12-19 4-4-5 4-8.5Z" fill="none" stroke="currentColor" stroke-width="4.3" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+function v15EnsureAirportOverlayClass() {
+  if (window.__V15AirportOverlay) return;
+  window.__V15AirportOverlay = class extends google.maps.OverlayView {
+    constructor(airport) { super(); this.airport=airport; this.position={lat:airport.lat,lng:airport.lng}; this.div=null; }
+    onAdd() {
+      const div=document.createElement("button"); div.type="button"; div.className="airport-marker"; div.title=this.airport.name;
+      div.innerHTML=`${v15PlaneSvg()}<span class="airport-code">${escapeHtml(this.airport.iata)}</span>`;
+      div.addEventListener("click",event=>{event.stopPropagation();v15ShowAirport(this.airport);});
+      this.div=div; this.getPanes().overlayMouseTarget.appendChild(div);
+    }
+    draw() { if(!this.div)return; const p=this.getProjection().fromLatLngToDivPixel(new google.maps.LatLng(this.position)); if(!p)return; this.div.style.left=`${p.x}px`;this.div.style.top=`${p.y}px`; }
+    onRemove(){this.div?.remove();this.div=null;}
+  };
+}
+function v15ClearAirports(){v15AirportOverlays.forEach(o=>o.setMap(null));v15AirportOverlays=[];}
+function v15RenderAirports(){
+  if(!map||!window.google?.maps)return; v15ClearAirports(); v15EnsureAirportOverlayClass();
+  for(const airport of V15_AIRPORTS[currentCityId]||[]){const o=new window.__V15AirportOverlay({...airport,city:currentCityId});o.setMap(map);v15AirportOverlays.push(o);}
+}
+function v15AirportByIata(iata){for(const list of Object.values(V15_AIRPORTS)){const x=list.find(a=>a.iata===iata);if(x)return x;}return null;}
+function v15PrimaryAirport(cityId){return (V15_AIRPORTS[cityId]||[]).find(a=>a.primary)||(V15_AIRPORTS[cityId]||[])[0]||null;}
+
+/* ----- Favorite flight searches (no live fare API) ----- */
+let v15FavoriteFlights = (()=>{try{const a=JSON.parse(localStorage.getItem(V15_FLIGHT_SEARCH_STORAGE)||"[]");return Array.isArray(a)?a:[];}catch{return[];}})();
+function v15SaveFavoriteFlights(){try{localStorage.setItem(V15_FLIGHT_SEARCH_STORAGE,JSON.stringify(v15FavoriteFlights));}catch{}}
+function v15DateYmd(offsetDays=1){const d=new Date(Date.now()+offsetDays*86400000);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
+function v15FlightLabel(item){return `${item.from} → ${item.to}${item.date?` · ${item.date}`:""}`;}
+function v15SaveFlightSearch(item){
+  const key=`${item.from}|${item.to}|${item.date||""}|${item.returnDate||""}|${item.preference||"best"}`;
+  v15FavoriteFlights=[{...item,id:`flight-${Date.now()}`,key,createdAt:Date.now()},...v15FavoriteFlights.filter(x=>x.key!==key)].slice(0,30);v15SaveFavoriteFlights();renderFavoritesSheet?.();showToast("Saved flight search to Favorites.");
+}
+function v15DeleteFlightSearch(id){v15FavoriteFlights=v15FavoriteFlights.filter(x=>x.id!==id);v15SaveFavoriteFlights();renderFavoritesSheet?.();}
+function v15FlightProviderUrl(provider,item){
+  const from=item.from.toLowerCase(),to=item.to.toLowerCase(); const compact=d=>String(d||"").replaceAll("-",""); const sky=d=>{const x=compact(d);return x.length===8?x.slice(2):x;}; const out=compact(item.date||v15DateYmd()), ret=compact(item.returnDate||"");
+  if(provider==="skyscanner") return `https://www.skyscanner.net/transport/flights/${from}/${to}/${sky(out)}${ret?`/${sky(ret)}`:""}/`;
+  const preference=item.preference==="cheapest"?"cheapest":item.preference==="fastest"?"fastest":"best";
+  const text=`${preference} flights from ${item.from} to ${item.to} on ${item.date||v15DateYmd()}${item.returnDate?` returning ${item.returnDate}`:""}`;
+  return `https://www.google.com/travel/flights?hl=en&q=${encodeURIComponent(text)}`;
+}
+function v15OpenFlightProvider(provider,item){
+  const label=provider==="skyscanner"?"Skyscanner":"Google Flights";
+  if(!window.confirm(`Open ${label} for ${v15FlightLabel(item)}?`))return;
+  window.open(v15FlightProviderUrl(provider,item),"_blank","noopener,noreferrer");
+}
+function v15ShowFlightSearch(origin,destination,existing={}){
+  const content=el("detail-content"); const pref=existing.preference||"best"; const date=existing.date||v15DateYmd(7); const ret=existing.returnDate||"";
+  content.innerHTML=`<div class="detail-label">FLIGHT SEARCH</div><h2>${escapeHtml(origin.iata)} → ${escapeHtml(destination.iata)}</h2><div class="sub">${escapeHtml(origin.name)} → ${escapeHtml(destination.name)}</div>
+    <div class="flight-search-form"><label><span class="field-label">Departure</span><input id="v15-flight-date" class="form-control" type="date" value="${escapeHtml(date)}"></label><label><span class="field-label">Return (optional)</span><input id="v15-flight-return" class="form-control" type="date" value="${escapeHtml(ret)}"></label></div>
+    <div class="info-section-title">WHAT DO YOU VALUE?</div><div class="flight-pref-row"><button class="flight-pref-btn ${pref==="fastest"?"active":""}" data-flight-pref="fastest">Fastest</button><button class="flight-pref-btn ${pref==="cheapest"?"active":""}" data-flight-pref="cheapest">Cheapest</button><button class="flight-pref-btn ${pref==="best"?"active":""}" data-flight-pref="best">Best mix</button></div>
+    <div class="flight-no-api-note">No flight-pricing API is connected in v1.5. The app keeps the airport experience and your preferences here, then opens a fresh live search on the provider you choose. It does not invent fares or flight times.</div>
+    <div class="flight-provider-grid"><button id="v15-google-flights" class="flight-provider-btn">Open Google Flights</button><button id="v15-skyscanner" class="flight-provider-btn">Open Skyscanner</button></div>
+    <div class="detail-actions compact-action-row"><button id="v15-save-flight" class="secondary-btn compact-btn">★ Favorite this search</button><button id="v15-airport-back" class="mini-edit-btn">← Airports</button></div>`;
+  let preference=pref; content.querySelectorAll("[data-flight-pref]").forEach(btn=>btn.addEventListener("click",()=>{preference=btn.dataset.flightPref;content.querySelectorAll("[data-flight-pref]").forEach(x=>x.classList.toggle("active",x===btn));}));
+  const current=()=>({from:origin.iata,to:destination.iata,date:el("v15-flight-date")?.value||date,returnDate:el("v15-flight-return")?.value||"",preference,originCity:origin.city||inferCityIdFromCoords(origin.lat,origin.lng),destinationCity:destination.city||inferCityIdFromCoords(destination.lat,destination.lng)});
+  content.querySelector("#v15-google-flights")?.addEventListener("click",()=>v15OpenFlightProvider("google",current()));
+  content.querySelector("#v15-skyscanner")?.addEventListener("click",()=>v15OpenFlightProvider("skyscanner",current()));
+  content.querySelector("#v15-save-flight")?.addEventListener("click",()=>v15SaveFlightSearch(current()));
+  content.querySelector("#v15-airport-back")?.addEventListener("click",()=>v15ShowAirport(origin)); openDetail();bringPanelToFront?.(el("detail-card"));
+}
+function v15ShowDestinationAirports(origin,cityId){
+  const content=el("detail-content"),list=(V15_AIRPORTS[cityId]||[]).map(a=>({...a,city:cityId}));
+  content.innerHTML=`<div class="detail-label">FLY FROM ${escapeHtml(origin.iata)}</div><h2>${escapeHtml(CITY_CONFIG[cityId]?.name||cityId)}</h2><div class="sub">Choose your arrival airport.</div><div class="airport-destination-grid">${list.map(a=>`<button class="airport-destination-btn" data-destination-airport="${escapeHtml(a.iata)}"><b>${escapeHtml(a.iata)}</b><br><small>${escapeHtml(a.name)}</small></button>`).join("")}</div><div class="detail-actions compact-action-row"><button id="v15-destination-back" class="mini-edit-btn">← Destination cities</button></div>`;
+  content.querySelectorAll("[data-destination-airport]").forEach(btn=>btn.addEventListener("click",()=>{const a=v15AirportByIata(btn.dataset.destinationAirport);if(a)v15ShowFlightSearch(origin,{...a,city:cityId});}));
+  content.querySelector("#v15-destination-back")?.addEventListener("click",()=>v15ShowAirport(origin));openDetail();
+}
+function v15ShowAirport(airport){
+  const origin={...airport,city:airport.city||currentCityId}; const content=el("detail-content"); const destinations=Object.keys(CITY_CONFIG).filter(id=>id!==origin.city);
+  content.innerHTML=`<div class="detail-label">AIRPORT</div><h2>${escapeHtml(origin.name)}</h2><div class="sub">${escapeHtml(origin.iata)} · ${escapeHtml(CITY_CONFIG[origin.city]?.name||"")}</div><div class="detail-section info-copy-section"><div class="info-section-title">FLY TO OUR CITIES</div><p>Choose a city, then an airport. Live schedules and fares open on an external flight-search provider because v1.5 deliberately uses no flight-pricing API.</p></div><div class="airport-destination-grid">${destinations.map(id=>`<button class="airport-destination-btn" data-flight-city="${id}">${escapeHtml(CITY_CONFIG[id].name)}</button>`).join("")}</div><div class="detail-actions compact-action-row"><button id="v15-airport-favorite" class="secondary-btn compact-btn">Add airport to Favorites</button><button id="v15-airport-directions" class="primary-btn compact-btn">Directions</button></div>`;
+  content.querySelectorAll("[data-flight-city]").forEach(btn=>btn.addEventListener("click",()=>v15ShowDestinationAirports(origin,btn.dataset.flightCity)));
+  content.querySelector("#v15-airport-favorite")?.addEventListener("click",()=>openPlaceEditor({lat:origin.lat,lng:origin.lng},`${origin.name} (${origin.iata})`,"Airport","Transport"));
+  content.querySelector("#v15-airport-directions")?.addEventListener("click",()=>v14eOpenNavigation({lat:origin.lat,lng:origin.lng,name:`${origin.name} (${origin.iata})`})); openDetail();bringPanelToFront?.(el("detail-card"));
+}
+
+/* ----- Searchable From / To endpoints ----- */
+const v15EndpointState={timers:{origin:null,destination:null},results:{origin:[],destination:[]},pending:null};
+function v15EndpointInput(endpoint){return el(endpoint==="origin"?"navigation-origin-input":"navigation-destination-input");}
+function v15EndpointResultsNode(endpoint){return el(endpoint==="origin"?"navigation-origin-results":"navigation-destination-results");}
+function v15SyncEndpointInputs(){
+  const oi=v15EndpointInput("origin"),di=v15EndpointInput("destination"); if(oi&&v14eNavigation.origin)oi.value=v14eNavigation.origin.name||"";if(di&&v14eNavigation.destination)di.value=v14eNavigation.destination.name||"";
+}
+function v15SetEndpoint(endpoint,place){
+  if(!place||!Number.isFinite(Number(place.lat))||!Number.isFinite(Number(place.lng)))return;
+  const value={lat:Number(place.lat),lng:Number(place.lng),name:place.name||place.address||"Selected place"};
+  v14eNavigation[endpoint]=value;v15SyncEndpointInputs();v15EndpointResultsNode(endpoint)?.classList.add("hidden");v14eNavigation.candidates=[];v14eClearNavPolylines();
+  el("navigation-status").textContent="Endpoint updated. Choose a mode to calculate routes.";el("navigation-results").innerHTML="";el("navigation-segment-legend")?.classList.add("hidden");
+  showToast(`${endpoint==="origin"?"From":"To"}: ${value.name}`);
+}
+function v15LocalEndpointMatches(query){
+  const q=normalizeSearch(query),items=[];if(!q)return items;
+  for(const p of frequentPlaces.filter(p=>getPlaceCityId(p)===currentCityId)){
+    const score=searchScore(q,normalizeSearch(`${p.name} ${p.category} ${p.note||""}`),normalizeSearch(p.name));if(score>0)items.push({kind:"favorite",score,name:p.name,sub:`${canonicalFavoriteCategory(p.category,p.name)} · Favorite`,lat:p.lat,lng:p.lng,icon:"★"});
+  }
+  // London's station registry is already local and cheap; other cities are added from their loaded state.
+  if(currentCityId==="london")for(const s of getSearchStations()){const score=searchScore(q,normalizeSearch(`${s.name} station`),normalizeSearch(s.name));if(score>0)items.push({kind:"station",score,name:s.name,sub:"Transport station",lat:s.lat,lng:s.lon,icon:"◆"});}
+  else if(currentCityId==="rome"){
+    for(const s of [...romeMetroStationRegistry.values(),...romeSurfaceStationRegistry.values()]){const score=searchScore(q,normalizeSearch(`${s.name} station`),normalizeSearch(s.name));if(score>0)items.push({kind:"station",score,name:s.name,sub:"Transport station",lat:s.lat,lng:s.lon,icon:"◆"});}
+  } else {
+    const st=V14D_CITY_TRANSIT[currentCityId];for(const s of st?.stations?.values?.()||[]){const score=searchScore(q,normalizeSearch(`${s.name} station`),normalizeSearch(s.name));if(score>0)items.push({kind:"station",score,name:s.name,sub:"Transport station",lat:s.lat,lng:s.lon,icon:"◆"});}
+  }
+  return items.sort((a,b)=>b.score-a.score).slice(0,5);
+}
+async function v15ExternalEndpointMatches(query){
+  let out=[];
+  try{
+    const {Place}=await google.maps.importLibrary("places");const {places=[]}=await Place.searchByText({textQuery:query,fields:["id","displayName","formattedAddress","location","primaryTypeDisplayName"],locationBias:map.getBounds()||undefined,maxResultCount:5,language:getActiveCityConfig().language,region:getActiveCityConfig().region});
+    out=places.map(p=>{const c=latLngLiteral(p.location);return c?{kind:"external",id:p.id||"",name:p.displayName||query,sub:p.formattedAddress||String(p.primaryTypeDisplayName||"Place"),address:p.formattedAddress||"",lat:c.lat,lng:c.lng,icon:"⌕"}:null;}).filter(Boolean);
+  }catch{}
+  if(!out.length&&geocoder){try{const r=await geocoder.geocode({address:query,bounds:map.getBounds()||undefined,region:getActiveCityConfig().geocoderRegion});out=(r.results||[]).slice(0,5).map(x=>{const c=latLngLiteral(x.geometry?.location);return c?{kind:"external",id:x.place_id||"",name:x.address_components?.[0]?.long_name||query,sub:x.formatted_address||query,address:x.formatted_address||"",lat:c.lat,lng:c.lng,icon:"⌕"}:null;}).filter(Boolean);}catch{}}
+  return out;
+}
+function v15RenderEndpointResults(endpoint,items,status=""){
+  const node=v15EndpointResultsNode(endpoint);if(!node)return;v15EndpointState.results[endpoint]=items;
+  node.innerHTML=items.map((x,i)=>`<button class="nav-endpoint-result" data-endpoint-result="${i}"><span class="nav-endpoint-result-icon">${x.icon||"●"}</span><span><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.sub||"")}</small></span></button>`).join("")+(status?`<div class="nav-endpoint-search-status">${escapeHtml(status)}</div>`:"");node.classList.remove("hidden");
+  node.querySelectorAll("[data-endpoint-result]").forEach(btn=>btn.addEventListener("click",()=>v15ChooseEndpointResult(endpoint,items[Number(btn.dataset.endpointResult)])));
+}
+function v15ChooseEndpointResult(endpoint,item){
+  if(!item)return;if(item.kind==="favorite"||item.kind==="station"){v15SetEndpoint(endpoint,item);return;}
+  v15EndpointResultsNode(endpoint)?.classList.add("hidden");map.panTo({lat:item.lat,lng:item.lng});if((map.getZoom()||0)<16)map.setZoom(16);v15EndpointState.pending={endpoint,item};
+  if(item.id){v14dShowPoi(item.id,{lat:()=>Number(item.lat),lng:()=>Number(item.lng)}).catch?.(()=>v15PendingEndpointPreview(endpoint,item));}
+  else v15PendingEndpointPreview(endpoint,item);
+}
+async function v15EndpointSearch(endpoint,query){
+  const q=String(query||"").trim();if(q.length<2){v15EndpointResultsNode(endpoint)?.classList.add("hidden");return;}
+  const local=v15LocalEndpointMatches(q);v15RenderEndpointResults(endpoint,local,"Searching the rest of the city…");const external=await v15ExternalEndpointMatches(q);
+  if(v15EndpointInput(endpoint)?.value.trim()!==q)return;const merged=[...local,...external.filter(e=>!local.some(l=>Math.abs(l.lat-e.lat)<1e-5&&Math.abs(l.lng-e.lng)<1e-5))].slice(0,9);v15RenderEndpointResults(endpoint,merged,merged.length?"Favorites are listed first.":"No place found.");
+}
+function v15ScheduleEndpointSearch(endpoint){const input=v15EndpointInput(endpoint);clearTimeout(v15EndpointState.timers[endpoint]);v15EndpointState.timers[endpoint]=setTimeout(()=>v15EndpointSearch(endpoint,input?.value||""),380);}
+function v15PendingEndpointPreview(endpoint,item){
+  v15EndpointState.pending={endpoint,item};const content=el("detail-content"),label=endpoint==="origin"?"FROM":"TO";
+  content.innerHTML=`<div class="detail-label">ROUTE ${label}</div><h2>${escapeHtml(item.name)}</h2><div class="sub">${escapeHtml(item.address||item.sub||CITY_CONFIG[currentCityId].name)}</div><div class="detail-section info-copy-section"><div class="info-section-title">USE THIS PLACE?</div><p>This place is not one of your saved favorites. You can inspect it on the map, save it, or use it as the ${label.toLowerCase()} point for this route.</p></div><div class="endpoint-context-actions"><button id="v15-use-endpoint" class="primary-btn compact-btn">Use this place as ${label}</button><button id="v15-save-endpoint" class="secondary-btn compact-btn">Add to Favorites</button></div>`;
+  content.querySelector("#v15-use-endpoint")?.addEventListener("click",()=>{v15SetEndpoint(endpoint,item);closeDetail(false);bringPanelToFront?.(el("navigation-sheet"));});
+  content.querySelector("#v15-save-endpoint")?.addEventListener("click",()=>openPlaceEditor({lat:item.lat,lng:item.lng},item.name,item.address||"",categoryFromGooglePlace("",item.name,item.address||"")));openDetail();bringPanelToFront?.(el("detail-card"));
+}
+["origin","destination"].forEach(endpoint=>{
+  const input=v15EndpointInput(endpoint);input?.addEventListener("input",()=>v15ScheduleEndpointSearch(endpoint));input?.addEventListener("focus",()=>{if(input.value.trim().length>=2)v15ScheduleEndpointSearch(endpoint);});input?.addEventListener("keydown",event=>{if(event.key==="Escape")v15EndpointResultsNode(endpoint)?.classList.add("hidden");});
+});
+
+const v14eOpenNavigationV15Base=v14eOpenNavigation;
+v14eOpenNavigation=function(destination=null){v15EndpointState.pending=null;v14eOpenNavigationV15Base(destination);v15SyncEndpointInputs();el("navigation-segment-legend")?.classList.add("hidden");};
+el("navigation-use-location")?.addEventListener("click",()=>setTimeout(v15SyncEndpointInputs,0));
+el("navigation-destination-centre")?.addEventListener("click",()=>setTimeout(v15SyncEndpointInputs,0));
+
+/* ----- Multicolor public-transport navigation ----- */
+function v15LatLngPoint(p){if(!p)return null;const lat=typeof p.lat==="function"?p.lat():Number(p.lat),lng=typeof p.lng==="function"?p.lng():Number(p.lng);return Number.isFinite(lat)&&Number.isFinite(lng)?{lat,lng}:null;}
+function v15StepPath(step){const raw=step?.path||[];const path=raw.map(v15LatLngPoint).filter(Boolean);if(path.length>1)return path;const a=v15LatLngPoint(step?.start_location||step?.startLocation),b=v15LatLngPoint(step?.end_location||step?.endLocation);return a&&b?[a,b]:[];}
+function v15NormalizeHexColor(color){const c=String(color||"").trim();if(/^#[0-9a-f]{6}$/i.test(c))return c;if(/^[0-9a-f]{6}$/i.test(c))return `#${c}`;return "";}
+function v15Hash(text){let h=0;for(const ch of String(text||""))h=(h*31+ch.charCodeAt(0))>>>0;return h;}
+function v15TransitVehicleIcon(type){const t=String(type||"").toUpperCase();if(/BUS/.test(t))return"🚌";if(/TRAM/.test(t))return"🚋";if(/SUBWAY|METRO/.test(t))return"🚇";if(/RAIL|TRAIN/.test(t))return"🚆";if(/FERRY/.test(t))return"⛴";return"◆";}
+function v15ExtractTransitSegments(route){
+  const segments=[];const used=new Set();let walkBuffer=null;
+  const flushWalk=()=>{if(walkBuffer?.path?.length>1)segments.push(walkBuffer);walkBuffer=null;};
+  for(const leg of route?.legs||[])for(const step of leg.steps||[]){
+    const path=v15StepPath(step);if(path.length<2)continue;
+    if(step.transit){flushWalk();const line=step.transit.line||{};const vehicle=line.vehicle||step.transit.vehicle||{};const service=line.short_name||line.name||vehicle.name||"Transit";let color=v15NormalizeHexColor(line.color);if(!color){color=V15_TRANSIT_FALLBACK_COLORS[v15Hash(`${service}-${vehicle.type}`)%V15_TRANSIT_FALLBACK_COLORS.length];while(used.has(color)){color=V15_TRANSIT_FALLBACK_COLORS[(V15_TRANSIT_FALLBACK_COLORS.indexOf(color)+1)%V15_TRANSIT_FALLBACK_COLORS.length];}}used.add(color);segments.push({kind:"transit",service,type:vehicle.type||vehicle.name||"Transit",icon:v15TransitVehicleIcon(vehicle.type||vehicle.name),color,path,from:step.transit.departure_stop?.name||"",to:step.transit.arrival_stop?.name||""});
+    }else{
+      if(!walkBuffer)walkBuffer={kind:"walk",service:"Walk",type:"WALKING",icon:"🚶",color:"#F4F7FB",path:[]};
+      if(walkBuffer.path.length&&path.length){const last=walkBuffer.path[walkBuffer.path.length-1],first=path[0];if(Math.abs(last.lat-first.lat)<1e-6&&Math.abs(last.lng-first.lng)<1e-6)walkBuffer.path.push(...path.slice(1));else walkBuffer.path.push(...path);}else walkBuffer.path.push(...path);
+    }
+  }
+  flushWalk();return segments;
+}
+const v14eCandidateFromRouteV15Base=v14eCandidateFromRoute;
+v14eCandidateFromRoute=function(route,source=""){const c=v14eCandidateFromRouteV15Base(route,source);c.transitSegments=v15ExtractTransitSegments(route);return c;};
+let v15NavLabels=[];
+function v15ClearNavLabels(){v15NavLabels.forEach(x=>x.setMap(null));v15NavLabels=[];}
+function v15EnsureNavLabelClass(){if(window.__V15NavSegmentLabel)return;window.__V15NavSegmentLabel=class extends google.maps.OverlayView{constructor(position,segment){super();this.position=position;this.segment=segment;this.div=null;}onAdd(){const d=document.createElement("div");d.className=`nav-segment-label ${this.segment.kind==="walk"?"walking":""}`;d.innerHTML=`<span>${this.segment.icon}</span><span class="seg-dot" style="background:${this.segment.color}"></span><span>${escapeHtml(this.segment.kind==="walk"?"Walk":this.segment.service)}</span>`;this.div=d;this.getPanes().overlayMouseTarget.appendChild(d);}draw(){if(!this.div)return;const p=this.getProjection().fromLatLngToDivPixel(new google.maps.LatLng(this.position));if(!p)return;this.div.style.left=`${p.x}px`;this.div.style.top=`${p.y}px`;}onRemove(){this.div?.remove();this.div=null;}};}
+function v15SegmentMidpoint(path){if(!path?.length)return null;return path[Math.floor(path.length/2)];}
+function v15RenderSegmentLegend(segments){const node=el("navigation-segment-legend");if(!node)return;if(!segments?.length){node.classList.add("hidden");node.innerHTML="";return;}node.innerHTML=segments.map(s=>`<span class="nav-segment-chip"><span>${s.icon}</span><span class="nav-segment-swatch" style="background:${s.color}"></span>${escapeHtml(s.kind==="walk"?"Walk":s.service)}</span>`).join("");node.classList.remove("hidden");}
+const v14eClearNavPolylinesV15Base=v14eClearNavPolylines;
+v14eClearNavPolylines=function(){v14eClearNavPolylinesV15Base();v15ClearNavLabels();v15RenderSegmentLegend([]);};
+v14eDrawCandidate=function(index){
+  v14eClearNavPolylines();const c=v14eNavigation.candidates[index];if(!c)return;v14eNavigation.selectedIndex=index;const bounds=new google.maps.LatLngBounds();
+  if(v14eNavigation.mode==="transit"&&c.transitSegments?.length){v15EnsureNavLabelClass();for(const seg of c.transitSegments){seg.path.forEach(p=>bounds.extend(p));const halo=new google.maps.Polyline({map,path:seg.path,strokeColor:"#06101A",strokeOpacity:.92,strokeWeight:seg.kind==="walk"?7:10,zIndex:95,clickable:false});const main=new google.maps.Polyline({map,path:seg.path,strokeColor:seg.color,strokeOpacity:1,strokeWeight:seg.kind==="walk"?3.5:5.5,zIndex:96,clickable:false,icons:seg.kind==="walk"?[{icon:{path:"M 0,-1 0,1",strokeOpacity:1,scale:2},offset:"0",repeat:"12px"}]:undefined});v14eNavPolylines.push(halo,main);const mid=v15SegmentMidpoint(seg.path);if(mid){const label=new window.__V15NavSegmentLabel(mid,seg);label.setMap(map);v15NavLabels.push(label);}}
+    v15RenderSegmentLegend(c.transitSegments);
+  } else {const color=v14eNavigation.mode==="walk"?"#F7F9FC":v14eNavigation.mode==="taxi"?"#FFD05A":"#5BA8FF";const halo=new google.maps.Polyline({map,path:c.path,strokeColor:"#07101B",strokeOpacity:.9,strokeWeight:10,zIndex:95,clickable:false});const main=new google.maps.Polyline({map,path:c.path,strokeColor:color,strokeOpacity:1,strokeWeight:5.5,zIndex:96,clickable:false});v14eNavPolylines.push(halo,main);c.path.forEach(p=>bounds.extend(p));}
+  if(!bounds.isEmpty())map.fitBounds(bounds,60);document.querySelectorAll(".navigation-result").forEach((n,i)=>n.classList.toggle("active",i===index));
+};
+v14eRenderNavigationResults=function(){
+  const node=el("navigation-results"),mode=v14eNavigation.mode;if(!v14eNavigation.candidates.length){node.innerHTML=`<div class="empty-state">No route alternatives returned for this mode.</div>`;return;}
+  node.innerHTML=v14eNavigation.candidates.map((c,i)=>{const extras=mode==="transit"?`${c.transfers} transfer${c.transfers===1?"":"s"}${c.walk?` · ${v14eFormatDistance(c.walk)} walk`:""}`:mode==="taxi"?`${v14eTaxiEstimate(c)} estimated fare`:c.source;const mini=mode==="transit"?(c.transitSegments||[]).slice(0,6).map(s=>`<span class="nav-result-segment ${s.kind==="walk"?"walk":""}" style="${s.kind==="walk"?"":`background:${s.color};color:${idealTextColor(s.color)}`}">${s.icon} ${escapeHtml(s.kind==="walk"?"Walk":s.service)}</span>`).join(""):"";return `<button class="navigation-result ${i===0?"active":""}" data-nav-route="${i}"><span class="navigation-rank">${i+1}</span><span class="navigation-result-main"><b>${i===0?"Best · ":""}${escapeHtml(c.summary||c.source||"Route")}</b><small>${escapeHtml(extras||"")}</small>${mini?`<span class="nav-result-segments">${mini}</span>`:""}</span><span class="navigation-result-time"><b>${v14eFormatDuration(c.duration)}</b><small>${v14eFormatDistance(c.distance)}</small></span></button>`;}).join("");
+  node.querySelectorAll("[data-nav-route]").forEach(btn=>btn.addEventListener("click",()=>v14eDrawCandidate(Number(btn.dataset.navRoute))));v14eDrawCandidate(0);
+};
+
+/* ----- On-demand bus lookup only (no giant bus layer) ----- */
+let v15BusSearchArmed=false;let v15BusRenderings=[];let v15BusLabel=null;let v15BusCurrent=null;
+function v15ClearBusLookup(){v15BusRenderings.forEach(x=>x.setMap(null));v15BusRenderings=[];v15BusLabel?.setMap(null);v15BusLabel=null;v15BusCurrent=null;}
+function v15SyncBusButton(){const b=el("panel-bus-toggle");if(!b)return;b.disabled=false;b.classList.remove("active");b.setAttribute("aria-pressed","false");b.title="Search for a specific bus line";const l=b.querySelector(".panel-layer-label");if(l)l.textContent="Bus search";const badge=b.querySelector(".panel-layer-badge");if(badge)badge.textContent="SEARCH";}
+v14eSyncBusPlaceholder=v15SyncBusButton;
+const toggleLayerV15Base=toggleLayer;
+toggleLayer=async function(name){if(name!=="bus-search")return toggleLayerV15Base(name);v15BusSearchArmed=true;toggleLayersPanel(true);const input=el("search-input");if(input){input.value="";input.placeholder="Search bus line · e.g. 49, 303A, 64";input.focus();}showToast("Type a bus route number and press Enter.");};
+function v15BusRefFromQuery(q){let x=String(q||"").trim().replace(/^bus\s+/i,"").replace(/^autob[uü]s\s+/i,"").replace(/^otob[uü]s\s+/i,"").trim();return /^(?:N|X)?\d{1,4}[A-Za-z]{0,3}$/i.test(x)?x.toUpperCase():"";}
+function v15BusRadius(){return currentCityId==="istanbul"?95000:currentCityId==="london"?65000:55000;}
+function v15OverpassBusQuery(ref){const c=CITY_CONFIG[currentCityId].center;const safe=ref.replace(/[^A-Za-z0-9-]/g,"");return `[out:json][timeout:18];relation(around:${v15BusRadius()},${c.lat},${c.lng})["type"="route"]["route"~"bus|trolleybus"]["ref"~"^${safe}$",i];out geom;`;}
+async function v15FetchOverpass(query){let last;for(const endpoint of V14D_OVERPASS_ENDPOINTS){try{const body=new URLSearchParams({data:query});const r=await fetch(endpoint,{method:"POST",body,headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"}});if(!r.ok)throw new Error(`Overpass ${r.status}`);return await r.json();}catch(err){last=err;}}throw last||new Error("Bus lookup failed");}
+function v15BusColor(ref,tags={}){const exact=v15NormalizeHexColor(tags.colour||tags.color);if(exact)return exact;const cityBase={london:"#E32017",rome:"#F2A93B",istanbul:"#F0B323",izmir:"#3A9BE8"};return cityBase[currentCityId]||V15_TRANSIT_FALLBACK_COLORS[v15Hash(ref)%V15_TRANSIT_FALLBACK_COLORS.length];}
+function v15EnsureBusLabelClass(){if(window.__V15BusLabel)return;window.__V15BusLabel=class extends google.maps.OverlayView{constructor(position,ref,color){super();this.position=position;this.ref=ref;this.color=color;this.div=null;}onAdd(){const d=document.createElement("div");d.className="bus-search-line-label";d.innerHTML=`🚌 <span style="color:${this.color}">${escapeHtml(this.ref)}</span>`;this.div=d;this.getPanes().overlayMouseTarget.appendChild(d);}draw(){if(!this.div)return;const p=this.getProjection().fromLatLngToDivPixel(new google.maps.LatLng(this.position));if(!p)return;this.div.style.left=`${p.x}px`;this.div.style.top=`${p.y}px`;}onRemove(){this.div?.remove();this.div=null;}};}
+async function v15LookupBus(ref){
+  ref=v15BusRefFromQuery(ref);if(!ref){showToast("Type a bus line such as 49 or 303A.");return;}hideSearchResults();toggleLayersPanel(false);setNetworkStatus(`Looking up bus ${ref}…`);v15ClearBusLookup();
+  try{const data=await v15FetchOverpass(v15OverpassBusQuery(ref));const rels=(data.elements||[]).filter(e=>e.type==="relation");if(!rels.length)throw new Error(`No bus ${ref} relation found near ${CITY_CONFIG[currentCityId].name}.`);const bounds=new google.maps.LatLngBounds();let longest=[];let color=v15BusColor(ref,rels[0].tags||{});let stops=[];
+    for(const rel of rels.slice(0,6)){color=v15BusColor(ref,rel.tags||{});for(const m of rel.members||[]){if(m.type==="way"&&Array.isArray(m.geometry)&&m.geometry.length>1){const path=m.geometry.map(p=>({lat:Number(p.lat),lng:Number(p.lon)})).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));if(path.length<2)continue;path.forEach(p=>bounds.extend(p));if(path.length>longest.length)longest=path;const casing=new google.maps.Polyline({map,path,strokeColor:"#07101A",strokeOpacity:.88,strokeWeight:8,zIndex:82,clickable:false});const main=new google.maps.Polyline({map,path,strokeColor:color,strokeOpacity:1,strokeWeight:4.2,zIndex:83,clickable:false});v15BusRenderings.push(casing,main);}if(m.type==="node"&&Number.isFinite(Number(m.lat))&&Number.isFinite(Number(m.lon))&&/(stop|platform)/i.test(m.role||""))stops.push({lat:Number(m.lat),lng:Number(m.lon)});}}
+    if(!bounds.isEmpty())map.fitBounds(bounds,55);v15EnsureBusLabelClass();if(longest.length){const mid=longest[Math.floor(longest.length/2)];v15BusLabel=new window.__V15BusLabel(mid,ref,color);v15BusLabel.setMap(map);}v15BusCurrent={ref,color,relations:rels.length,stops:stops.length};setNetworkStatus(`Bus ${ref} · on-demand line loaded`);const content=el("detail-content");content.innerHTML=`<div class="detail-label">BUS LINE</div><h2>Bus ${escapeHtml(ref)}</h2><div class="sub">${escapeHtml(CITY_CONFIG[currentCityId].name)} · loaded only because you searched for it</div><div class="detail-section"><div class="info-row"><span>Route variants</span><b>${rels.length}</b></div><div class="info-row"><span>Mapped stops</span><b>${stops.length||"—"}</b></div></div><div class="detail-section info-copy-section"><div class="info-section-title">PERFORMANCE</div><p>Our Cities does not draw the whole bus network. Specific bus lines load only when you search for them or when navigation needs them.</p></div><div class="detail-actions compact-action-row"><button id="v15-clear-bus" class="mini-edit-btn">Clear bus line</button></div>`;content.querySelector("#v15-clear-bus")?.addEventListener("click",()=>{v15ClearBusLookup();closeDetail();});openDetail();
+  }catch(err){console.warn("Bus lookup failed",err);setNetworkStatus("Bus lookup unavailable",true);showToast(err.message||"Bus line could not be loaded.",3300);}
+}
+const searchInputV15=el("search-input");searchInputV15?.addEventListener("keydown",event=>{if(event.key!=="Enter")return;const ref=v15BusRefFromQuery(searchInputV15.value);if(v15BusSearchArmed||ref||/^\s*bus\s+/i.test(searchInputV15.value)){event.preventDefault();event.stopImmediatePropagation();v15BusSearchArmed=false;v15LookupBus(ref||searchInputV15.value);}},true);
+
+/* ----- Better POI fallback classification ----- */
+function v15DistanceApprox(a,b){const dy=(a.lat-b.lat)*111320,dx=(a.lng-b.lng)*111320*Math.cos((a.lat+b.lat)*Math.PI/360);return Math.hypot(dx,dy);}
+function v15OsmFeatureType(tags={}){return tags.amenity||tags.shop||tags.healthcare||tags.tourism||tags.leisure||tags.office||tags.railway||tags.public_transport||tags.aeroway||tags.building||"Place";}
+function v15PoiTypeReliable(type){return !/^(place|yes|building|elevator|entrance|steps|crossing|footway|path|road|residential|service|unclassified)$/i.test(String(type||"").trim());}
+async function v15NearbyNamedOsmFeature(lat,lng){
+  const q=`[out:json][timeout:12];(nwr(around:110,${lat},${lng})["name"]["amenity"];nwr(around:110,${lat},${lng})["name"]["shop"];nwr(around:110,${lat},${lng})["name"]["healthcare"];nwr(around:110,${lat},${lng})["name"]["tourism"];nwr(around:110,${lat},${lng})["name"]["leisure"];nwr(around:110,${lat},${lng})["name"]["office"];nwr(around:110,${lat},${lng})["name"]["railway"="station"];nwr(around:110,${lat},${lng})["name"]["aeroway"];);out center tags 30;`;
+  try{const data=await v15FetchOverpass(q);const origin={lat,lng};const list=(data.elements||[]).map(e=>{const p=e.type==="node"?{lat:Number(e.lat),lng:Number(e.lon)}:{lat:Number(e.center?.lat),lng:Number(e.center?.lon)};return Number.isFinite(p.lat)&&Number.isFinite(p.lng)?{...e,point:p,d:v15DistanceApprox(origin,p)}:null;}).filter(Boolean).sort((a,b)=>a.d-b.d);return list[0]||null;}catch{return null;}
+}
+function v15RoadishName(name){return /\b(caddesi|cadde|sokak|sokağı|street|road|avenue|lane|way|boulevard|via|viale|piazza|meydanı|bulvarı)\b/i.test(String(name||""));}
+function v15GenericImageAllowed(type,source){return source==="Google Maps"||v15PoiTypeReliable(type);}
+v14d1PoiPanel=function({name,type,address,hours,status,photoUrl,loc,source}){
+  let cleanType=String(type||"Place");if(!v15PoiTypeReliable(cleanType)){if(v15RoadishName(name)||/road|street/i.test(address||""))cleanType="Road / street";else cleanType="Map place";}
+  const category=v14dPoiCategory(cleanType),exact=!!photoUrl,genericAllowed=v15GenericImageAllowed(cleanType,source),hero=exact?photoUrl:(genericAllowed?v14eGenericPhoto(name,cleanType):"");const content=el("detail-content");
+  const pending=v15EndpointState.pending;const pendingMatches=pending&&loc&&v15DistanceApprox({lat:Number(loc.lat),lng:Number(loc.lng)},{lat:Number(pending.item.lat),lng:Number(pending.item.lng)})<80;const endpointButton=pendingMatches?`<button class="primary-btn compact-btn" id="v15-poi-use-endpoint">Use as ${pending.endpoint==="origin"?"FROM":"TO"}</button>`:"";
+  content.innerHTML=`<div class="detail-label">${escapeHtml(cleanType.toUpperCase())}</div><h2>${escapeHtml(name||"Map place")}</h2><div class="sub">${escapeHtml(address||CITY_CONFIG[currentCityId].name)}</div>${hero?`<div class="poi-photo-wrap"><img class="poi-photo" src="${escapeHtml(hero)}" alt="${escapeHtml(name||"Place")}" />${!exact?`<span class="poi-generic-badge">Generic ${escapeHtml(cleanType.toLowerCase())} image</span>`:""}</div>`:""}<div class="detail-section">${status?`<div class="info-row"><span>Status</span><b>${escapeHtml(status)}</b></div>`:""}${hours?`<div class="poi-hours"><div class="info-section-title">OPENING HOURS</div><div class="poi-hours-line">${escapeHtml(hours)}</div></div>`:""}</div><div class="detail-section info-copy-section"><div class="info-section-title">WHAT IS IT?</div><p>${escapeHtml(v15PoiTypeReliable(cleanType)?`${name||"This place"} is mapped as ${cleanType.toLowerCase()}.`:`This is a clickable mapped location. Detailed business classification was not reliable enough to guess.`)}</p>${source?`<div class="poi-source-note">Place information: ${escapeHtml(source)}</div>`:""}</div><div class="detail-actions compact-action-row">${endpointButton}<button class="secondary-btn compact-btn" id="v15-poi-favorite">Add to Favorites</button><button class="primary-btn compact-btn" id="v15-poi-route">Directions</button></div>`;
+  content.querySelector("#v15-poi-use-endpoint")?.addEventListener("click",()=>{const p=v15EndpointState.pending;if(!p)return;v15SetEndpoint(p.endpoint,{...p.item,name:name||p.item.name,address:address||p.item.address});v15EndpointState.pending=null;closeDetail(false);bringPanelToFront?.(el("navigation-sheet"));});
+  content.querySelector("#v15-poi-favorite")?.addEventListener("click",()=>openPlaceEditor(loc,name||"Saved place",address||"",category));content.querySelector("#v15-poi-route")?.addEventListener("click",()=>v14eOpenNavigation({...loc,name:name||"Destination"}));openDetail();bringPanelToFront?.(el("detail-card"));
+};
+v14dShowPoi=async function(placeId,latLng){
+  if(v14dPoiBusy)return;v14dPoiBusy=true;const fallbackLoc={lat:latLng.lat(),lng:latLng.lng()};const content=el("detail-content");content.innerHTML=`<div class="detail-label">PLACE</div><h2>Loading place…</h2><div class="poi-loading">Looking for a reliable name and category.</div>`;openDetail();bringPanelToFront?.(el("detail-card"));
+  try{
+    try{const {Place}=await google.maps.importLibrary("places");const place=new Place({id:placeId,requestedLanguage:getActiveCityConfig().language||"en"});await place.fetchFields({fields:["displayName","formattedAddress","location","primaryTypeDisplayName","currentOpeningHours","regularOpeningHours","photos","businessStatus"]});const loc=place.location?{lat:place.location.lat(),lng:place.location.lng()}:fallbackLoc;const photo=place.photos?.[0];v14d1PoiPanel({name:place.displayName||"Map place",type:place.primaryTypeDisplayName||"Place",address:place.formattedAddress||"",hours:v14dPoiHours(place),status:String(place.businessStatus||"").replaceAll("_"," ").toLowerCase(),photoUrl:photo?.getURI?.({maxWidth:800,maxHeight:460})||"",loc,source:"Google Maps"});return;}catch(googleErr){console.debug("Google Places details unavailable; trying local map data.",googleErr);}
+    const [nearby,reverse,geo] = await Promise.all([v15NearbyNamedOsmFeature(fallbackLoc.lat,fallbackLoc.lng),v14d1OsmReverse(fallbackLoc.lat,fallbackLoc.lng).catch(()=>null),geocoder?.geocode?.({placeId}).catch?.(()=>null)||null]);
+    if(nearby){const tags=nearby.tags||{},name=tags.name||tags.brand||"Map place",type=v15OsmFeatureType(tags),address=reverse?.display_name||"",photo=v14d1SafeImage(tags.image||tags["image:0"]||tags.wikimedia_commons||"");v14d1PoiPanel({name,type,address,hours:tags.opening_hours||"",status:"",photoUrl:photo,loc:nearby.point||fallbackLoc,source:"OpenStreetMap nearby feature"});return;}
+    const gr=geo?.results?.[0];if(gr){const name=gr.address_components?.[0]?.long_name||String(gr.formatted_address||"").split(",")[0]||"Map place";const type=(gr.types||[]).find(t=>!/^(point_of_interest|establishment)$/i.test(t))||gr.types?.[0]||"Place";v14d1PoiPanel({name,type:type.replaceAll("_"," "),address:gr.formatted_address||"",hours:"",status:"",photoUrl:"",loc:fallbackLoc,source:"Google Geocoder fallback"});return;}
+    if(reverse){const road=reverse.address?.road||reverse.address?.pedestrian||reverse.address?.footway||"";const name=road||reverse.namedetails?.name||reverse.name||String(reverse.display_name||"").split(",")[0]||"Map place";const type=road?"Road / street":(reverse.type||reverse.category||"Place");v14d1PoiPanel({name,type,address:reverse.display_name||"",hours:reverse.extratags?.opening_hours||"",status:"",photoUrl:v14d1SafeImage(reverse.extratags?.image||""),loc:fallbackLoc,source:"OpenStreetMap fallback"});return;}
+    v14d1PoiPanel({name:"Map place",type:"Place",address:`${fallbackLoc.lat.toFixed(5)}, ${fallbackLoc.lng.toFixed(5)}`,hours:"",status:"",photoUrl:"",loc:fallbackLoc,source:"map coordinate"});
+  }finally{v14dPoiBusy=false;}
+};
+
+/* ----- Favorites sheet includes flight searches ----- */
+const renderFavoritesSheetV15Base=renderFavoritesSheet;
+renderFavoritesSheet=function(){renderFavoritesSheetV15Base();const node=el("favorite-flights-list");if(!node)return;const cityFlights=v15FavoriteFlights.filter(x=>x.originCity===currentCityId||!x.originCity);node.innerHTML=cityFlights.length?cityFlights.map(item=>`<div class="flight-favorite-row"><button class="flight-favorite-main" data-open-flight="${escapeHtml(item.id)}"><b>✈ ${escapeHtml(v15FlightLabel(item))}</b><small>${escapeHtml(item.preference||"best")} · ${item.returnDate?"round trip":"one way"}</small></button><button class="favorite-delete" data-delete-flight="${escapeHtml(item.id)}">×</button></div>`).join(""):`<div class="empty-state">No saved flight searches from this city.</div>`;node.querySelectorAll("[data-open-flight]").forEach(btn=>btn.addEventListener("click",()=>{const item=v15FavoriteFlights.find(x=>x.id===btn.dataset.openFlight);if(!item)return;const a=v15AirportByIata(item.from),b=v15AirportByIata(item.to);if(a&&b){closeFavoritesSheet(false);v15ShowFlightSearch({...a,city:item.originCity},{...b,city:item.destinationCity},item);}}));node.querySelectorAll("[data-delete-flight]").forEach(btn=>btn.addEventListener("click",()=>v15DeleteFlightSearch(btn.dataset.deleteFlight)));};
+
+/* ----- lifecycle hooks ----- */
+const initMapV15Base=initMap;
+initMap=function(){initMapV15Base();v15RenderAirports();v15UpdateClock();};
+const switchCityV15Base=switchCity;
+switchCity=async function(nextCityId,options={}){v15ClearBusLookup();const result=await switchCityV15Base(nextCityId,options);v15RenderAirports();v15UpdateClock();v15SyncBusButton();return result;};
+const updateV14CityUIV15Base=updateV14CityUI;
+updateV14CityUI=function(){updateV14CityUIV15Base();v15SyncBusButton();v15UpdateClock();};
+v15SyncBusButton();
+
+console.info(`Our Cities Map ${V15_VERSION} search-first navigation, buses and airports loaded`);

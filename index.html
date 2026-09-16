@@ -10,7 +10,7 @@
   <title>Our Cities Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.4e" />
+  <link rel="stylesheet" href="styles.css?v=1.5" />
 </head>
 <body>
   <main id="app">
@@ -120,7 +120,7 @@
             <button id="panel-metro-toggle" class="panel-layer-toggle" data-layer="metro" aria-pressed="false"><span class="panel-layer-icon metro-symbol">M</span><span class="panel-layer-label">Metro</span></button>
             <button id="panel-rail-toggle" class="panel-layer-toggle" data-layer="rail" aria-pressed="false"><span class="panel-layer-icon rail-symbol">◇</span><span class="panel-layer-label">Rail</span></button>
             <button id="panel-tram-toggle" class="panel-layer-toggle" data-layer="tram" aria-pressed="false"><span class="panel-layer-icon tram-symbol">▰</span><span class="panel-layer-label">Tram</span></button>
-            <button id="panel-bus-toggle" class="panel-layer-toggle" data-layer="bus" aria-pressed="false" disabled title="Bus layer arrives in a later update"><span class="panel-layer-icon">B</span><span class="panel-layer-label">Bus</span><span class="panel-layer-badge">LATER</span></button>
+            <button id="panel-bus-toggle" class="panel-layer-toggle panel-layer-action" data-layer="bus-search" aria-pressed="false" title="Search for a specific bus line"><span class="panel-layer-icon">B</span><span class="panel-layer-label">Bus search</span><span class="panel-layer-badge">SEARCH</span></button>
           </div>
         </section>
 
@@ -150,6 +150,10 @@
       <button id="item-focus-chip" class="item-focus-chip glass hidden" aria-label="Exit focused transport item">◎ <span data-item-focus-name></span> · Exit focus</button>
     </section>
 
+    <div id="city-clock" class="city-clock glass" aria-live="polite">
+      <div id="city-clock-time" class="city-clock-time">--:--</div>
+      <div id="city-clock-date" class="city-clock-date">---</div>
+    </div>
     <div class="corner-actions">
       <button id="info-btn" class="floating-icon glass" aria-label="Map information" title="Information">ⓘ</button>
       <button id="settings-btn" class="floating-icon glass" aria-label="Settings" title="Settings">⚙</button>
@@ -207,6 +211,10 @@
         <div class="favorites-heading"><span>Favorite Routes</span><small>Most used first</small></div>
         <div id="favorite-routes-list" class="favorites-list"></div>
       </div>
+      <div class="favorites-section">
+        <div class="favorites-heading"><span>Flight Searches</span><small>Saved airport pairs and dates</small></div>
+        <div id="favorite-flights-list" class="favorites-list"></div>
+      </div>
     </section>
 
     <section id="place-editor-sheet" class="detail-card glass hidden" aria-live="polite" aria-label="Save frequent place">
@@ -248,9 +256,19 @@
       <button id="navigation-close" class="detail-close" aria-label="Close">×</button>
       <div class="detail-label">NAVIGATION</div>
       <h2>Choose how to get there</h2>
-      <div class="navigation-endpoints">
-        <div class="navigation-endpoint"><span>FROM</span><b id="navigation-origin-name">Current location</b></div>
-        <div class="navigation-endpoint"><span>TO</span><b id="navigation-destination-name">Map centre</b></div>
+      <div class="navigation-endpoints navigation-endpoints-v15">
+        <div class="navigation-endpoint navigation-endpoint-search" data-nav-endpoint="origin">
+          <span>FROM</span>
+          <input id="navigation-origin-input" class="navigation-endpoint-input" type="search" autocomplete="off" spellcheck="false" placeholder="Current location or search…" />
+          <b id="navigation-origin-name" class="hidden">Current location</b>
+          <div id="navigation-origin-results" class="navigation-endpoint-results hidden"></div>
+        </div>
+        <div class="navigation-endpoint navigation-endpoint-search" data-nav-endpoint="destination">
+          <span>TO</span>
+          <input id="navigation-destination-input" class="navigation-endpoint-input" type="search" autocomplete="off" spellcheck="false" placeholder="Map centre or search…" />
+          <b id="navigation-destination-name" class="hidden">Map centre</b>
+          <div id="navigation-destination-results" class="navigation-endpoint-results hidden"></div>
+        </div>
       </div>
       <div class="navigation-quick-actions"><button id="navigation-use-location" class="tiny-panel-action">◎ Use my location</button><button id="navigation-destination-centre" class="tiny-panel-action">＋ Destination = map centre</button></div>
       <div class="navigation-mode-grid" id="navigation-mode-grid">
@@ -261,6 +279,7 @@
         <button class="navigation-mode navigation-mode-custom" data-nav-mode="custom"><span>★</span><b>Custom route</b><small>Build it yourself</small></button>
       </div>
       <div id="navigation-status" class="sub detail-section">Choose a mode to calculate routes.</div>
+      <div id="navigation-segment-legend" class="navigation-segment-legend hidden"></div>
       <div id="navigation-taxi-ranks" class="navigation-taxi-ranks hidden"></div>
       <div id="navigation-results" class="navigation-results"></div>
     </section>
@@ -328,6 +347,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.4e"></script>
+  <script src="app.js?v=1.5"></script>
 </body>
 </html>
