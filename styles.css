@@ -1678,3 +1678,278 @@ body.city-flight-active .city-choice { opacity: .62; }
 
 /* v1.4C walk route editor */
 .walk-segment-card{gap:10px}.walk-endpoint-block{padding:10px;border:1px solid rgba(255,255,255,.10);border-radius:12px;background:rgba(255,255,255,.035)}.walk-endpoint-title{font-size:10px;letter-spacing:.16em;color:var(--muted);font-weight:800;margin-bottom:7px}.walk-pick-actions{display:flex;gap:7px;margin-top:7px;flex-wrap:wrap}.tiny-route-btn{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:var(--text);border-radius:9px;padding:7px 9px;font-size:11px;font-weight:700;cursor:pointer}.tiny-route-btn:hover{background:rgba(255,255,255,.10)}.walk-direction-arrow{text-align:center;color:var(--muted);font-weight:900;line-height:1}
+
+/* ---------- v1.4D: welcome, city themes, POI cards, control spacing ---------- */
+:root {
+  --city-accent: var(--accent);
+  --city-accent-soft: rgba(100,168,255,.18);
+  --city-accent-border: rgba(100,168,255,.38);
+}
+
+body.city-theme-rome {
+  --accent: #32d7cb;
+  --accent2: #6cb7b7;
+  --city-accent: #32d7cb;
+  --city-accent-soft: rgba(48,213,200,.18);
+  --city-accent-border: rgba(64,224,208,.40);
+  --panel: rgba(8, 28, 31, .88);
+  --panel-strong: rgba(5, 21, 24, .97);
+  --line: rgba(130, 236, 228, .16);
+  --muted: #9fc5c3;
+}
+
+body.city-theme-rome .layers-menu-btn,
+body.city-theme-rome .floating-icon.active,
+body.city-theme-rome .panel-layer-toggle.active,
+body.city-theme-rome .city-choice.active,
+body.city-theme-rome .primary-btn,
+body.city-theme-rome .add-action {
+  border-color: var(--city-accent-border);
+}
+
+body.city-theme-rome .panel-layer-toggle.active,
+body.city-theme-rome .city-choice.active,
+body.city-theme-rome .base-control.active {
+  background: var(--city-accent-soft);
+  color: #eafffd;
+}
+
+body.city-theme-rome .add-action {
+  background: linear-gradient(145deg, #40e0d0, #30d5c8 58%, #0fa7a7);
+  color: #031718;
+  box-shadow: 0 10px 32px rgba(48,213,200,.32);
+}
+
+body.city-theme-rome .round-action.active {
+  background: rgba(48,213,200,.94);
+  color: #041617;
+  box-shadow: 0 8px 28px rgba(48,213,200,.28);
+}
+
+body.city-theme-rome .layers-panel,
+body.city-theme-rome .detail-card,
+body.city-theme-rome .modal-card {
+  box-shadow: 0 18px 54px rgba(0, 38, 41, .46);
+}
+
+body.city-theme-rome .city-choice-ela.active {
+  background: linear-gradient(135deg, rgba(48,213,200,.22), rgba(95,158,160,.18));
+  border-color: rgba(64,224,208,.44);
+}
+
+/* Keep our floating controls clear of Google zoom/camera controls. */
+.right-actions {
+  right: 76px !important;
+}
+
+/* First-launch profile screen */
+.welcome-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 22% 18%, rgba(68,116,190,.22), transparent 34%),
+    radial-gradient(circle at 82% 76%, rgba(48,213,200,.12), transparent 31%),
+    linear-gradient(145deg, #07101a, #0b121c 48%, #081117);
+  transition: opacity .46s ease, transform .46s ease, filter .46s ease;
+}
+
+.welcome-screen::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  opacity: .13;
+  background-image:
+    linear-gradient(rgba(255,255,255,.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.12) 1px, transparent 1px);
+  background-size: 44px 44px;
+  transform: perspective(800px) rotateX(62deg) scale(1.3) translateY(14%);
+  mask-image: linear-gradient(to bottom, transparent 2%, #000 42%, #000 75%, transparent 100%);
+}
+
+.welcome-screen.leaving {
+  opacity: 0;
+  transform: scale(1.018);
+  filter: blur(10px);
+  pointer-events: none;
+}
+
+.welcome-ambient {
+  position: absolute;
+  width: 34vw;
+  height: 34vw;
+  min-width: 280px;
+  min-height: 280px;
+  border-radius: 50%;
+  filter: blur(72px);
+  opacity: .22;
+  pointer-events: none;
+}
+.welcome-ambient-a { left: -10vw; top: -14vw; background: #4d8cd6; }
+.welcome-ambient-b { right: -12vw; bottom: -16vw; background: #30d5c8; }
+
+.welcome-card {
+  position: relative;
+  width: min(660px, calc(100vw - 34px));
+  padding: clamp(28px, 5vw, 54px);
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 30px;
+  background: rgba(8, 14, 22, .72);
+  box-shadow: 0 34px 100px rgba(0,0,0,.46);
+  backdrop-filter: blur(24px) saturate(125%);
+  -webkit-backdrop-filter: blur(24px) saturate(125%);
+  text-align: center;
+}
+
+.welcome-kicker {
+  color: #8da3bc;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .18em;
+}
+.welcome-card h1 { margin: 8px 0 6px; font-size: clamp(34px, 7vw, 58px); letter-spacing: -.045em; }
+.welcome-card > p { margin: 0 0 26px; color: var(--muted); font-size: 14px; }
+
+.welcome-profiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.welcome-profile {
+  min-height: 118px;
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 20px;
+  padding: 17px;
+  background: rgba(255,255,255,.045);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform .18s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.welcome-profile:hover { transform: translateY(-2px); background: rgba(255,255,255,.075); }
+.welcome-profile-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 52px;
+  font-size: 22px;
+  font-weight: 950;
+  background: rgba(100,168,255,.16);
+  border: 1px solid rgba(100,168,255,.26);
+}
+.welcome-profile b { display: block; font-size: 16px; }
+.welcome-profile small { display: block; margin-top: 5px; color: #95a6b9; font-size: 11px; }
+.welcome-ela { border-color: rgba(48,213,200,.18); }
+.welcome-ela:hover { border-color: rgba(64,224,208,.45); box-shadow: 0 14px 44px rgba(48,213,200,.12); }
+.welcome-ela .welcome-profile-mark {
+  background: linear-gradient(145deg, rgba(64,224,208,.22), rgba(0,139,139,.28));
+  border-color: rgba(64,224,208,.34);
+  color: #79f2e7;
+}
+.welcome-note { margin-top: 18px; color: #6f8195; font-size: 10px; }
+
+.welcome-heart {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 410;
+  transform: translate(-50%,-50%) scale(.55);
+  font-size: min(44vw, 360px);
+  color: #40e0d0;
+  opacity: 0;
+  filter: drop-shadow(0 0 40px rgba(64,224,208,.38));
+  pointer-events: none;
+}
+.welcome-heart.show {
+  animation: v14d-heart 1.05s cubic-bezier(.19,.8,.24,1) both;
+}
+@keyframes v14d-heart {
+  0% { opacity: 0; transform: translate(-50%,-50%) scale(.52); }
+  24% { opacity: 1; transform: translate(-50%,-50%) scale(1.03); }
+  58% { opacity: .92; transform: translate(-50%,-50%) scale(.96); }
+  100% { opacity: 0; transform: translate(-50%,-50%) scale(1.18); }
+}
+
+/* POI panel kept intentionally compact versus Google Maps' full place sheet. */
+.poi-photo {
+  width: 100%;
+  max-height: 190px;
+  object-fit: cover;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.09);
+  margin: 12px 0 2px;
+  background: rgba(255,255,255,.035);
+}
+.poi-hours {
+  display: grid;
+  gap: 4px;
+}
+.poi-hours-line {
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.poi-status-open { color: #78e6aa !important; }
+.poi-status-closed { color: #ff9e9e !important; }
+.poi-loading { padding: 20px 0; color: var(--muted); }
+
+.city-choice.returnable {
+  border-color: rgba(255,255,255,.18);
+  background: rgba(255,255,255,.055);
+}
+.city-choice.returnable::after {
+  content: "↩";
+  margin-left: 4px;
+  color: var(--city-accent);
+  font-size: 10px;
+}
+.city-choice:disabled {
+  cursor: default;
+  opacity: .74;
+  transform: none !important;
+}
+
+/* Generic Istanbul / Izmir transit nodes */
+.v14d-city-station {
+  position: absolute;
+  transform: translate(-50%,-50%);
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255,255,255,.95);
+  border-radius: 50%;
+  background: #17212d;
+  box-shadow: 0 1px 4px rgba(0,0,0,.52);
+  cursor: pointer;
+  transition: opacity .14s ease, transform .14s ease;
+}
+.v14d-city-station.rail { border-radius: 2px; transform: translate(-50%,-50%) rotate(45deg); }
+.v14d-city-station.tram { border-radius: 2px; width: 9px; height: 9px; }
+.v14d-city-station.interchange { width: 13px; height: 13px; border-width: 3px; }
+.v14d-city-line-label {
+  position: absolute;
+  transform: translate(-50%,-50%);
+  padding: 2px 5px;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 8px;
+  font-weight: 950;
+  line-height: 1;
+  box-shadow: 0 1px 5px rgba(0,0,0,.35);
+  pointer-events: none;
+}
+
+@media (max-width: 700px) {
+  .right-actions { right: 70px !important; }
+  .welcome-card { border-radius: 24px; padding: 26px 18px; }
+  .welcome-profiles { grid-template-columns: 1fr; }
+  .welcome-profile { min-height: 88px; }
+  .welcome-heart { font-size: min(64vw, 280px); }
+}

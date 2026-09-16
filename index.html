@@ -10,10 +10,32 @@
   <title>Our Cities Map</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.4c" />
+  <link rel="stylesheet" href="styles.css?v=1.4d" />
 </head>
 <body>
   <main id="app">
+
+    <section id="welcome-screen" class="welcome-screen hidden" aria-label="Welcome to Our Cities">
+      <div class="welcome-ambient welcome-ambient-a"></div>
+      <div class="welcome-ambient welcome-ambient-b"></div>
+      <div class="welcome-card">
+        <div class="welcome-kicker">OUR CITIES</div>
+        <h1>Welcome</h1>
+        <p>Choose where your map begins.</p>
+        <div class="welcome-profiles">
+          <button class="welcome-profile welcome-kagan" data-welcome-profile="kagan">
+            <span class="welcome-profile-mark">K</span>
+            <span><b>Welcome Kağan</b><small>Start in London</small></span>
+          </button>
+          <button class="welcome-profile welcome-ela" data-welcome-profile="ela">
+            <span class="welcome-profile-mark">♥</span>
+            <span><b>Welcome Ela</b><small>Start in Rome</small></span>
+          </button>
+        </div>
+        <div class="welcome-note">You can switch profiles later in Settings.</div>
+      </div>
+    </section>
+    <div id="welcome-heart" class="welcome-heart" aria-hidden="true">♥</div>
     <div id="map" aria-label="Interactive city map"></div>
     <div id="city-arrival" class="city-arrival" aria-live="polite"><div class="city-arrival-name"></div><div class="city-arrival-gesture"></div></div>
 
@@ -255,6 +277,7 @@
         <h2>Map settings</h2>
         <button id="replace-key-btn" class="secondary-btn">Replace Google Maps key</button>
         <button id="refresh-tfl-btn" class="secondary-btn">Refresh transport data</button>
+        <button id="switch-profile-btn" class="secondary-btn">Switch profile</button>
         <p class="fineprint">Metro, Rail and Tram data are cached on your device for 24 hours to make mobile loading faster.</p>
       </div>
     </section>
@@ -278,6 +301,6 @@
     }
   </script>
 
-  <script src="app.js?v=1.4c"></script>
+  <script src="app.js?v=1.4d"></script>
 </body>
 </html>

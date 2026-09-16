@@ -6714,3 +6714,472 @@ updateDataAttributionV14B = function(){
 };
 
 console.info(`Our Cities Map ${V14C_VERSION} patch loaded`);
+
+/* ---------- v1.4D: profiles, city themes, POI cards, Istanbul + İzmir ---------- */
+const V14D_VERSION = "1.4D";
+const V14D_PROFILE_STORAGE = "ourCities.profile.v1";
+const V14D_OVERPASS_CACHE_PREFIX = "ourCities.overpass.v14d.";
+const V14D_OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter"
+];
+
+const V14D_CITY_BBOX = {
+  istanbul: { south: 40.78, west: 28.45, north: 41.32, east: 29.48 },
+  izmir: { south: 38.22, west: 26.80, north: 38.72, east: 27.42 }
+};
+
+const V14D_CITY_TRANSIT = {
+  istanbul: { loaded:false, loading:null, source:"", lineById:new Map(), geometry:new Map(), stations:new Map(), renderings:[], stationOverlays:[], labelOverlays:[] },
+  izmir: { loaded:false, loading:null, source:"", lineById:new Map(), geometry:new Map(), stations:new Map(), renderings:[], stationOverlays:[], labelOverlays:[] }
+};
+
+const V14D_CITY_INFO = {
+  istanbul: { ready:false, loading:null, layer:null, centroids:[], labels:[], weather:new Map(), weatherPromise:null, wind:[], windPromise:null },
+  izmir: { ready:false, loading:null, layer:null, centroids:[], labels:[], weather:new Map(), weatherPromise:null, wind:[], windPromise:null }
+};
+
+const V14D_FALLBACK = {
+  istanbul: [
+    { ref:"M2", name:"M2 · Yenikapı–Hacıosman", family:"metro", color:"#00A651", stations:[
+      ["Yenikapı",41.0053,28.9533],["Vezneciler",41.0128,28.9615],["Haliç",41.0228,28.9707],["Şişhane",41.0287,28.9747],["Taksim",41.0369,28.9851],["Osmanbey",41.0520,28.9871],["Şişli–Mecidiyeköy",41.0665,28.9931],["Gayrettepe",41.0719,29.0061],["Levent",41.0810,29.0118],["4. Levent",41.0854,29.0059],["İTÜ–Ayazağa",41.1047,29.0251],["Atatürk Oto Sanayi",41.1182,29.0211],["Darüşşafaka",41.1274,29.0240],["Hacıosman",41.1480,29.0234]
+    ]},
+    { ref:"M4", name:"M4 · Kadıköy–Sabiha Gökçen", family:"metro", color:"#E6007E", stations:[
+      ["Kadıköy",40.9905,29.0232],["Ayrılık Çeşmesi",40.9995,29.0397],["Acıbadem",41.0015,29.0565],["Ünalan",41.0027,29.0751],["Göztepe",40.9990,29.0952],["Kozyatağı",40.9738,29.1006],["Bostancı",40.9581,29.0958],["Küçükyalı",40.9491,29.1086],["Maltepe",40.9357,29.1305],["Kartal",40.8896,29.1850],["Pendik",40.8762,29.2333],["Tavşantepe",40.8731,29.2635],["Sabiha Gökçen Havalimanı",40.8986,29.3092]
+    ]},
+    { ref:"M5", name:"M5 · Üsküdar–Samandıra", family:"metro", color:"#6D2C91", stations:[
+      ["Üsküdar",41.0269,29.0154],["Fıstıkağacı",41.0295,29.0294],["Bağlarbaşı",41.0214,29.0385],["Altunizade",41.0218,29.0436],["Kısıklı",41.0227,29.0550],["Bulgurlu",41.0168,29.0671],["Ümraniye",41.0168,29.0834],["Yamanevler",41.0162,29.1000],["Çakmak",41.0160,29.1178],["Dudullu",41.0165,29.1481],["Çekmeköy",41.0325,29.1768],["Samandıra Merkez",40.9996,29.2306]
+    ]},
+    { ref:"M7", name:"M7 · Yıldız–Mahmutbey", family:"metro", color:"#E6007E", stations:[
+      ["Yıldız",41.0490,29.0092],["Fulya",41.0579,29.0049],["Mecidiyeköy",41.0665,28.9931],["Çağlayan",41.0718,28.9812],["Kağıthane",41.0858,28.9732],["Nurtepe",41.0917,28.9633],["Alibeyköy",41.1004,28.9447],["Veysel Karani–Akşemsettin",41.0924,28.9242],["Karadeniz Mahallesi",41.0855,28.8998],["Tekstilkent–Giyimkent",41.0716,28.8683],["Mahmutbey",41.0543,28.8297]
+    ]},
+    { ref:"M11", name:"M11 · Gayrettepe–İstanbul Havalimanı", family:"metro", color:"#7D4E9E", stations:[
+      ["Gayrettepe",41.0719,29.0061],["Kağıthane",41.0858,28.9732],["Hasdal",41.1455,28.9587],["Kemerburgaz",41.1590,28.9161],["Göktürk",41.1800,28.8891],["İhsaniye",41.2274,28.8295],["İstanbul Havalimanı",41.2752,28.7519],["Arnavutköy",41.1844,28.7409]
+    ]},
+    { ref:"Marmaray", name:"R1 · Marmaray", family:"rail", color:"#7A1F4B", stations:[
+      ["Halkalı",41.0340,28.7782],["Bakırköy",40.9805,28.8720],["Yenikapı",41.0053,28.9533],["Sirkeci",41.0154,28.9779],["Üsküdar",41.0269,29.0154],["Ayrılık Çeşmesi",40.9995,29.0397],["Söğütlüçeşme",40.9914,29.0378],["Bostancı",40.9581,29.0958],["Maltepe",40.9357,29.1305],["Kartal",40.8896,29.1850],["Pendik",40.8762,29.2333],["Gebze",40.8026,29.4307]
+    ]},
+    { ref:"T1", name:"T1 · Kabataş–Bağcılar", family:"tram", color:"#1B9AD6", stations:[
+      ["Kabataş",41.0342,28.9933],["Fındıklı",41.0317,28.9900],["Tophane",41.0266,28.9828],["Karaköy",41.0221,28.9754],["Eminönü",41.0165,28.9708],["Sirkeci",41.0154,28.9779],["Gülhane",41.0136,28.9812],["Sultanahmet",41.0084,28.9779],["Beyazıt",41.0102,28.9653],["Laleli",41.0094,28.9552],["Aksaray",41.0104,28.9502],["Yusufpaşa",41.0106,28.9448],["Topkapı",41.0214,28.9280],["Cevizlibağ",41.0182,28.9089],["Zeytinburnu",41.0018,28.9060],["Bağcılar",41.0340,28.8564]
+    ]},
+    { ref:"T5", name:"T5 · Eminönü–Alibeyköy", family:"tram", color:"#C83C3C", stations:[
+      ["Eminönü",41.0165,28.9708],["Cibali",41.0286,28.9595],["Fener",41.0328,28.9482],["Balat",41.0348,28.9416],["Ayvansaray",41.0380,28.9390],["Eyüpsultan",41.0470,28.9331],["Alibeyköy",41.1004,28.9447]
+    ]}
+  ],
+  izmir: [
+    { ref:"Metro", name:"M1 · İzmir Metro", family:"metro", color:"#E52329", stations:[
+      ["Evka 3",38.4658,27.2131],["Ege Üniversitesi",38.4570,27.2281],["Bornova",38.4624,27.2154],["Bölge",38.4500,27.1965],["Sanayi",38.4470,27.1846],["Stadyum",38.4409,27.1787],["Halkapınar",38.4355,27.1684],["Hilal",38.4281,27.1553],["Basmane",38.4227,27.1432],["Çankaya",38.4191,27.1353],["Konak",38.4188,27.1280],["Üçyol",38.4021,27.1193],["İzmirspor",38.3955,27.1157],["Hatay",38.3905,27.1110],["Göztepe",38.3835,27.1027],["Poligon",38.3756,27.0980],["Fahrettin Altay",38.3901,27.0461],["Balçova",38.3890,27.0350],["Dokuz Eylül Üniversitesi Hastanesi",38.3866,27.0176],["Narlıdere Kaymakamlık",38.3925,26.9985]
+    ]},
+    { ref:"İZBAN", name:"R1 · İZBAN", family:"rail", color:"#2E86C1", stations:[
+      ["Aliağa",38.7990,26.9720],["Menemen",38.6079,27.0694],["Çiğli",38.4942,27.0607],["Mavişehir",38.4757,27.0741],["Karşıyaka",38.4556,27.1124],["Alaybey",38.4583,27.1000],["Bayraklı",38.4626,27.1665],["Halkapınar",38.4355,27.1684],["Alsancak",38.4384,27.1481],["Hilal",38.4281,27.1553],["Kemer",38.4183,27.1583],["Şirinyer",38.3926,27.1505],["Gaziemir",38.3229,27.1297],["Adnan Menderes Havalimanı",38.2924,27.1569],["Cumaovası",38.2527,27.1346],["Torbalı",38.1594,27.3583]
+    ]},
+    { ref:"T1", name:"T1 · Konak Tram", family:"tram", color:"#2CA6A4", stations:[
+      ["Fahrettin Altay",38.3901,27.0461],["Göztepe",38.4010,27.0815],["Köprü",38.4064,27.0954],["Karataş",38.4093,27.1170],["Konak İskele",38.4180,27.1281],["Gazi Bulvarı",38.4230,27.1368],["Alsancak Gar",38.4384,27.1481],["Halkapınar",38.4355,27.1684]
+    ]},
+    { ref:"T2", name:"T2 · Karşıyaka Tram", family:"tram", color:"#55B6D7", stations:[
+      ["Alaybey",38.4583,27.1000],["Karşıyaka İskele",38.4556,27.1124],["Bostanlı İskele",38.4587,27.0953],["Mavişehir",38.4757,27.0741],["Ataşehir",38.4887,27.0535]
+    ]},
+    { ref:"T3", name:"T3 · Çiğli Tram", family:"tram", color:"#8CBF4A", stations:[
+      ["Ataşehir",38.4887,27.0535],["Çiğli",38.4942,27.0607],["Katip Çelebi Üniversitesi",38.5268,27.0565],["Ata Sanayi",38.5108,27.0506],["Mavişehir",38.4757,27.0741]
+    ]}
+  ]
+};
+
+function v14dSleep(ms){ return new Promise(resolve=>setTimeout(resolve,ms)); }
+function v14dNormalize(value){ return String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim(); }
+function v14dSlug(value){ return v14dNormalize(value).replace(/\s+/g,"-") || `item-${Math.random().toString(36).slice(2,8)}`; }
+function v14dCityState(cityId=currentCityId){ return V14D_CITY_TRANSIT[cityId]; }
+function v14dLineName(line){ return line?.displayName || line?.name || line?.ref || "Transit line"; }
+function v14dCityStationId(cityId,name,lat,lng){ return `${cityId}:${v14dSlug(name)}:${Number(lat).toFixed(4)},${Number(lng).toFixed(4)}`; }
+function v14dCityLineId(cityId,family,ref,name){ return `${cityId}-${family}-${v14dSlug(ref||name)}`; }
+function v14dColorFallback(cityId,family,ref){
+  const palettes={metro:["#00A651","#E52329","#7B4BB7","#E6007E","#2879D0"],rail:["#7A1F4B","#2E86C1","#606C86"],tram:["#1B9AD6","#C83C3C","#2CA6A4","#8CBF4A"]};
+  const text=`${cityId}:${family}:${ref}`;let hash=0;for(const ch of text)hash=(hash*31+ch.charCodeAt(0))>>>0;const arr=palettes[family]||palettes.metro;return arr[hash%arr.length];
+}
+function v14dValidColor(value){ return /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(value||"")) ? value : null; }
+
+function v14dClassifyRelation(cityId,tags={}){
+  const route=String(tags.route||"").toLowerCase();
+  const ref=String(tags.ref||"").trim();
+  const name=String(tags.name||"").trim();
+  const hay=v14dNormalize(`${ref} ${name} ${tags.operator||""} ${tags.network||""}`);
+  let family=null;
+  if(route==="subway") family="metro";
+  else if(route==="tram") family="tram";
+  else if(route==="light_rail") family = /izban|marmaray/.test(hay) ? "rail" : (/metro|m\d/.test(hay)?"metro":"tram");
+  else if(route==="train") family="rail";
+  if(!family)return null;
+  if(cityId==="istanbul"){
+    if(family==="metro" && !( /^m\d/i.test(ref) || /metro|m\d/.test(hay) )) return null;
+    if(family==="tram" && !( /^t\d/i.test(ref) || /tram/.test(hay) )) return null;
+    if(family==="rail" && !/marmaray|banliyo|suburban|b1/.test(hay)) return null;
+  }
+  if(cityId==="izmir"){
+    if(family==="rail" && !/izban|izban/.test(hay)) return null;
+    if(family==="metro" && !/metro|izmir/.test(hay) && ref && !/^m/i.test(ref)) return null;
+    if(family==="tram" && !/tram|tramvay|t\d/.test(hay)) return null;
+  }
+  const code = ref || (family==="metro" ? "M" : family==="rail" ? "R" : "T");
+  const display = name ? (ref && !v14dNormalize(name).includes(v14dNormalize(ref)) ? `${ref} · ${name}` : name) : code;
+  return { family, ref:code, name:name||code, displayName:display };
+}
+
+function v14dOverpassQuery(cityId){
+  const b=V14D_CITY_BBOX[cityId];
+  const trainFilter = cityId === "istanbul"
+    ? `relation[\"route\"=\"train\"][\"name\"~\"Marmaray|Banliyö\",i](${b.south},${b.west},${b.north},${b.east});relation[\"route\"=\"train\"][\"ref\"~\"B1|Marmaray\",i](${b.south},${b.west},${b.north},${b.east});`
+    : `relation[\"route\"=\"train\"][\"name\"~\"İZBAN|IZBAN|Izban\",i](${b.south},${b.west},${b.north},${b.east});`;
+  return `[out:json][timeout:35];(relation[\"route\"=\"subway\"](${b.south},${b.west},${b.north},${b.east});relation[\"route\"=\"light_rail\"](${b.south},${b.west},${b.north},${b.east});relation[\"route\"=\"tram\"](${b.south},${b.west},${b.north},${b.east});${trainFilter}node[\"railway\"~\"station|halt|tram_stop\"](${b.south},${b.west},${b.north},${b.east});node[\"public_transport\"=\"station\"](${b.south},${b.west},${b.north},${b.east}););out body geom;`;
+}
+
+async function v14dFetchOverpass(cityId){
+  const cacheKey=`${V14D_OVERPASS_CACHE_PREFIX}${cityId}`;
+  try{
+    const cached=JSON.parse(localStorage.getItem(cacheKey)||"null");
+    if(cached?.expires>Date.now() && cached?.data)return cached.data;
+  }catch{}
+  let lastError=null;
+  for(const endpoint of V14D_OVERPASS_ENDPOINTS){
+    try{
+      const body=new URLSearchParams({data:v14dOverpassQuery(cityId)});
+      const res=await fetch(endpoint,{method:"POST",body,headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"}});
+      if(!res.ok)throw new Error(`Overpass ${res.status}`);
+      const data=await res.json();
+      try{localStorage.setItem(cacheKey,JSON.stringify({expires:Date.now()+12*60*60*1000,data}));}catch{}
+      return data;
+    }catch(err){lastError=err;console.warn("Overpass endpoint failed",endpoint,err);}
+  }
+  throw lastError||new Error("Transit network request failed");
+}
+
+function v14dRelationPaths(relation){
+  const paths=[];
+  for(const member of relation?.members||[]){
+    if(member.type!=="way"||!Array.isArray(member.geometry)||member.geometry.length<2)continue;
+    const path=member.geometry.map(p=>({lat:Number(p.lat),lng:Number(p.lon)})).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));
+    if(path.length>1)paths.push(path);
+  }
+  return paths;
+}
+
+function v14dDistanceToPaths(point,paths){
+  let best=Infinity;
+  for(const path of paths||[]){
+    const step=Math.max(1,Math.floor(path.length/160));
+    for(let i=0;i<path.length;i+=step){const d=haversineKm(point,path[i]);if(d<best)best=d;}
+    if(path.length){const d=haversineKm(point,path[path.length-1]);if(d<best)best=d;}
+  }
+  return best;
+}
+
+function v14dParseOverpass(cityId,data){
+  const state=V14D_CITY_TRANSIT[cityId];
+  state.lineById=new Map();state.geometry=new Map();state.stations=new Map();
+  const relations=(data?.elements||[]).filter(e=>e.type==="relation");
+  for(const relation of relations){
+    const classification=v14dClassifyRelation(cityId,relation.tags||{});if(!classification)continue;
+    const paths=v14dRelationPaths(relation);if(!paths.length)continue;
+    const id=v14dCityLineId(cityId,classification.family,classification.ref,classification.name);
+    const color=v14dValidColor(relation.tags?.colour)||v14dValidColor(relation.tags?.color)||v14dColorFallback(cityId,classification.family,classification.ref);
+    const line={id,city:cityId,...classification,color,source:"OpenStreetMap / Overpass",about:`${classification.displayName} is part of ${CITY_CONFIG[cityId].name}'s ${classification.family} network.`,background:"This network view follows mapped public-transport infrastructure and is simplified for fast mobile rendering."};
+    state.lineById.set(id,line);state.geometry.set(id,paths);
+  }
+  const nodes=(data?.elements||[]).filter(e=>e.type==="node"&&e.tags?.name&&Number.isFinite(Number(e.lat))&&Number.isFinite(Number(e.lon)));
+  for(const node of nodes){
+    const point={lat:Number(node.lat),lng:Number(node.lon)};const services=[];
+    for(const line of state.lineById.values()){
+      const threshold=line.family==="rail"?.32:line.family==="tram"?.18:.22;
+      if(v14dDistanceToPaths(point,state.geometry.get(line.id)||[])<=threshold)services.push(line);
+    }
+    if(!services.length)continue;
+    const id=v14dCityStationId(cityId,node.tags.name,point.lat,point.lng);
+    const existing=state.stations.get(id)||{id,city:cityId,name:node.tags.name,lat:point.lat,lon:point.lng,services:[]};
+    for(const line of services)if(!existing.services.some(x=>x.id===line.id))existing.services.push(line);
+    state.stations.set(id,existing);
+  }
+  for (const station of state.stations.values()) {
+    station.lines = station.services.filter(service => service.family === "metro");
+    station.surfaceServices = station.services.filter(service => service.family !== "metro");
+  }
+  return state.lineById.size>0;
+}
+
+function v14dLoadStaticFallback(cityId){
+  const state=V14D_CITY_TRANSIT[cityId];state.lineById=new Map();state.geometry=new Map();state.stations=new Map();
+  for(const raw of V14D_FALLBACK[cityId]||[]){
+    const id=v14dCityLineId(cityId,raw.family,raw.ref,raw.name);const line={id,city:cityId,ref:raw.ref,code:raw.ref,name:raw.name,displayName:raw.name,family:raw.family,color:raw.color,source:"Bundled fallback",about:`${raw.name} is one of the key ${raw.family} corridors in ${CITY_CONFIG[cityId].name}.`,background:"This bundled fallback keeps the map usable when the live open-data request is unavailable. It intentionally prioritizes the main corridor and transfer stations."};
+    state.lineById.set(id,line);
+    const path=raw.stations.map(s=>({lat:s[1],lng:s[2]}));state.geometry.set(id,[path]);
+    for(const [name,lat,lng] of raw.stations){const sid=v14dCityStationId(cityId,name,lat,lng);const station=state.stations.get(sid)||{id:sid,city:cityId,name,lat,lon:lng,services:[]};if(!station.services.some(x=>x.id===id))station.services.push(line);state.stations.set(sid,station);}
+  }
+  for (const station of state.stations.values()) { station.lines=station.services.filter(s=>s.family==="metro"); station.surfaceServices=station.services.filter(s=>s.family!=="metro"); }
+  state.source="bundled fallback";
+}
+
+function v14dClearCityTransitRenderings(cityId){
+  const state=V14D_CITY_TRANSIT[cityId];if(!state)return;
+  state.renderings.forEach(item=>item.polyline?.setMap(null));state.renderings=[];
+  state.stationOverlays.forEach(item=>item.setMap(null));state.stationOverlays=[];
+  state.labelOverlays.forEach(item=>item.setMap(null));state.labelOverlays=[];
+}
+
+function v14dRenderPath(line,path,state){
+  const raw=v13fThinPath(path,line.family==="rail"?180:line.family==="tram"?240:260);if(raw.length<2)return;
+  if(line.family==="tram"){
+    const band=new google.maps.Polyline({map,path:raw,strokeColor:line.color,strokeOpacity:0,strokeWeight:8,zIndex:24,visible:false,clickable:false});
+    const main=new google.maps.Polyline({map,path:raw,strokeColor:line.color,strokeOpacity:0,strokeWeight:2.8,zIndex:25,visible:false,clickable:false});
+    state.renderings.push({polyline:band,line,role:"tram-band"},{polyline:main,line,role:"main"});
+  }else if(line.family==="rail"){
+    const outer=new google.maps.Polyline({map,path:raw,strokeColor:line.color,strokeOpacity:0,strokeWeight:7,zIndex:23,visible:false,clickable:false});
+    const inner=new google.maps.Polyline({map,path:raw,strokeColor:"#0B1017",strokeOpacity:0,strokeWeight:2.8,zIndex:24,visible:false,clickable:false});
+    state.renderings.push({polyline:outer,line,role:"rail-outer"},{polyline:inner,line,role:"rail-inner"});
+  }else{
+    const main=new google.maps.Polyline({map,path:raw,strokeColor:line.color,strokeOpacity:0,strokeWeight:5,zIndex:20,visible:false,clickable:false});
+    state.renderings.push({polyline:main,line,role:"main"});
+  }
+  const hit=new google.maps.Polyline({map,path:raw,strokeColor:line.color,strokeOpacity:.001,strokeWeight:20,zIndex:66,visible:false,clickable:true});
+  hit.addListener("click",()=>v14dSelectCityLine(line,{fit:false,showInfo:true}));state.renderings.push({polyline:hit,line,role:"hit"});
+}
+
+function v14dEnsureStationOverlayClass(){
+  if(window.__V14DCityStationOverlay)return;
+  window.__V14DCityStationOverlay=class extends HtmlOverlay{
+    constructor(station){super({lat:station.lat,lng:station.lon},"v14d-city-station");this.station=station;}
+    onAdd(){super.onAdd();const families=[...new Set(this.station.services.map(s=>s.family))];this.div.classList.add(families[0]||"metro");if(families.length>1||this.station.services.length>1)this.div.classList.add("interchange");this.div.style.background=stationNodeBackground(this.station.services.map(s=>({color:s.color})));this.div.title=`${this.station.name} · ${this.station.services.map(v14dLineName).join(" · ")}`;this.div.addEventListener("click",e=>{e.stopPropagation();v14dSelectCityStation(this.station,{showInfo:true});});}
+  };
+}
+function v14dEnsureLineLabelClass(){
+  if(window.__V14DCityLineLabel)return;
+  window.__V14DCityLineLabel=class extends HtmlOverlay{
+    constructor(position,line){super(position,"v14d-city-line-label");this.line=line;}
+    onAdd(){super.onAdd();this.div.textContent=this.line.ref||this.line.code||this.line.name;this.div.style.background=this.line.color;this.div.style.color=idealTextColor(this.line.color);}
+  };
+}
+
+function v14dRenderCityTransit(cityId){
+  if(!map)return;const state=V14D_CITY_TRANSIT[cityId];v14dClearCityTransitRenderings(cityId);v14dEnsureStationOverlayClass();v14dEnsureLineLabelClass();
+  for(const line of state.lineById.values())for(const path of state.geometry.get(line.id)||[])v14dRenderPath(line,path,state);
+  for(const station of state.stations.values()){const overlay=new window.__V14DCityStationOverlay(station);overlay.setMap(map);overlay.setVisible(false);state.stationOverlays.push(overlay);}
+  const zoom=map.getZoom?.()||12;
+  for(const line of state.lineById.values()){
+    const paths=state.geometry.get(line.id)||[];for(const path of paths){if(path.length<2)continue;const step=Math.max(22,Math.floor(path.length/(zoom>=13?3:2)));for(let i=Math.floor(step/2);i<path.length;i+=step){const overlay=new window.__V14DCityLineLabel(path[i],line);overlay.setMap(map);overlay.setVisible(false);state.labelOverlays.push(overlay);}}
+  }
+}
+
+async function ensureV14DCityTransit(cityId,force=false){
+  const state=V14D_CITY_TRANSIT[cityId];if(!state)return;
+  if(state.loaded&&!force)return state;if(state.loading&&!force)return state.loading;
+  state.loading=(async()=>{
+    if(force){try{localStorage.removeItem(`${V14D_OVERPASS_CACHE_PREFIX}${cityId}`);}catch{}state.loaded=false;}
+    try{
+      const data=await v14dFetchOverpass(cityId);if(!v14dParseOverpass(cityId,data))throw new Error("No matching transit routes found");state.source="live OpenStreetMap";
+    }catch(err){console.warn(`${cityId} live transport unavailable; using fallback`,err);v14dLoadStaticFallback(cityId);showToast(`${CITY_CONFIG[cityId].name}: bundled transport loaded while live map data is unavailable.`,3200);}
+    state.loaded=true;v14dRenderCityTransit(cityId);routeGraphCache.clear();return state;
+  })().finally(()=>state.loading=null);
+  return state.loading;
+}
+
+function v14dTransportSelection(){const sel=getTransportSelection?.();return sel?.city===currentCityId?sel:null;}
+function v14dApplyCityTransportState(cityId){
+  const state=V14D_CITY_TRANSIT[cityId];if(!state?.loaded)return;const route=getActiveFavoriteRoute();const routeFocus=route&&getRouteCityId(route)===cityId;const selected=v14dTransportSelection();
+  const routeIds=new Set((route?.segments||[]).map(s=>s.service).filter(id=>state.lineById.has(id)));
+  for(const item of state.renderings){const familyOn=routeFocus?routeIds.has(item.line.id):!!layerState[item.line.family];const selectedOn=!selected||selected.type!=="line"||selected.id===item.line.id;const visible=familyOn&&selectedOn;item.polyline.setVisible(visible);if(!visible)continue;
+    if(item.role==="hit")item.polyline.setOptions({strokeOpacity:.001,strokeWeight:18});
+    else if(item.role==="tram-band")item.polyline.setOptions({strokeOpacity:selected?.id===item.line.id ? .25 : .12,strokeWeight:selected?.id===item.line.id?10:8});
+    else if(item.role==="rail-outer")item.polyline.setOptions({strokeOpacity:selected?.id===item.line.id?1:.78,strokeWeight:selected?.id===item.line.id?8:7});
+    else if(item.role==="rail-inner")item.polyline.setOptions({strokeOpacity:.92});
+    else item.polyline.setOptions({strokeOpacity:selected?.id===item.line.id?1:.92,strokeWeight:selected?.id===item.line.id?6.5:5});
+  }
+  for(const overlay of state.stationOverlays){const allowedFamily=overlay.station.services.some(s=>routeFocus?routeIds.has(s.id):!!layerState[s.family]);const allowedSelection=!selected||selected.type!=="station"||selected.id===overlay.station.id;overlay.setVisible(allowedFamily&&allowedSelection);}
+  for(const overlay of state.labelOverlays){const familyOn=routeFocus?routeIds.has(overlay.line.id):!!layerState[overlay.line.family];const selectedOn=!selected||selected.type!=="line"||selected.id===overlay.line.id;overlay.setVisible(familyOn&&selectedOn&&(map.getZoom?.()||12)>=10.5);}
+}
+
+function v14dLineBounds(line){const state=V14D_CITY_TRANSIT[line.city];const bounds=new google.maps.LatLngBounds();(state.geometry.get(line.id)||[]).flat().forEach(p=>bounds.extend(p));return bounds;}
+function v14dSelectCityLine(line,options={}){activeFavoriteRouteId=null;persistentTransportFocus=null;transientTransportSelection={type:"line",family:line.family,id:line.id,label:v14dLineName(line),city:line.city,line};updateRouteFocusChip();updateItemFocusChip();applyLayerState();if(options.fit){const b=v14dLineBounds(line);if(!b.isEmpty())map.fitBounds(b,44);}if(options.showInfo!==false)v14dShowLineInfo(line);}
+function v14dSelectCityStation(station,options={}){activeFavoriteRouteId=null;persistentTransportFocus=null;transientTransportSelection={type:"station",family:station.services?.[0]?.family||"metro",id:station.id,label:station.name,city:station.city,station};updateRouteFocusChip();updateItemFocusChip();applyLayerState();if(options.showInfo!==false)v14dShowStationInfo(station);}
+
+function v14dShowLineInfo(line){const state=V14D_CITY_TRANSIT[line.city];const count=[...state.stations.values()].filter(s=>s.services.some(x=>x.id===line.id)).length;const content=el("detail-content");content.innerHTML=`<div class="detail-label">${escapeHtml(line.family.toUpperCase())} LINE</div><h2>${escapeHtml(v14dLineName(line))}</h2><div class="sub">${escapeHtml(CITY_CONFIG[line.city].name)} transport</div><div class="detail-section"><div class="info-row"><span>Mapped stations</span><b>${count||"—"}</b></div><div class="info-row"><span>Data</span><b>${escapeHtml(state.source||"network")}</b></div></div><div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(line.about||`${v14dLineName(line)} is part of the city's transport network.`)}</p></div><div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>${escapeHtml(line.background||"This route is rendered as a geographic infrastructure layer so you can learn how it sits in the city.")}</p></div><div class="detail-actions compact-action-row"><button class="secondary-btn compact-btn" id="v14d-focus-line">Focus line</button><button class="primary-btn compact-btn" id="v14d-route-line">Add line to Route</button></div>`;openDetail();bringPanelToFront(el("detail-card"));content.querySelector("#v14d-focus-line")?.addEventListener("click",()=>{setPersistentTransportFocus({type:"line",family:line.family,id:line.id,label:v14dLineName(line),city:line.city,line});applyLayerState();});content.querySelector("#v14d-route-line")?.addEventListener("click",()=>startRouteWithSegment({mode:line.family,service:line.id,kind:"line"}));}
+function v14dShowStationInfo(station){const services=station.services||[];const family=services[0]?.family||"metro";const content=el("detail-content");content.innerHTML=`<div class="detail-label">${services.length>1?"TRANSFER STATION":family==="tram"?"TRAM STOP":family==="rail"?"RAIL STATION":"METRO STATION"}</div><h2>${escapeHtml(station.name)}</h2><div class="sub">${escapeHtml(CITY_CONFIG[station.city].name)} · ${services.map(v14dLineName).join(" · ")}</div><div class="chips">${services.map(line=>`<button class="line-chip line-chip-button" data-v14d-line="${escapeHtml(line.id)}" style="background:${line.color};color:${idealTextColor(line.color)}">${escapeHtml(v14dLineName(line))}</button>`).join("")}</div><div class="detail-section info-copy-section"><div class="info-section-title">ABOUT</div><p>${escapeHtml(`${station.name} is served by ${services.map(v14dLineName).join(", ")}.`)}</p></div><div class="detail-section info-copy-section"><div class="info-section-title">BACKGROUND</div><p>Use Focus to isolate this station or add it directly as an endpoint while building a favorite route.</p></div><div class="detail-actions compact-action-row"><button class="secondary-btn compact-btn" id="v14d-focus-station">Focus station</button><button class="primary-btn compact-btn" id="v14d-route-station">${!el("route-editor-sheet")?.classList.contains("hidden")?"Use as route endpoint":"Start route here"}</button></div>`;openDetail();bringPanelToFront(el("detail-card"));content.querySelectorAll("[data-v14d-line]").forEach(btn=>btn.addEventListener("click",()=>{const line=V14D_CITY_TRANSIT[station.city].lineById.get(btn.dataset.v14dLine);if(line)v14dSelectCityLine(line,{showInfo:true});}));content.querySelector("#v14d-focus-station")?.addEventListener("click",()=>{setPersistentTransportFocus({type:"station",family,id:station.id,label:station.name,station,city:station.city});applyLayerState();});content.querySelector("#v14d-route-station")?.addEventListener("click",()=>{if(!el("route-editor-sheet")?.classList.contains("hidden")&&useStationInOpenRoute(station,family))return;startRouteWithSegment({mode:family,service:services.find(s=>s.family===family)?.id||services[0]?.id||"",startStationId:station.id,startStationName:station.name});});}
+
+/* ---------- v1.4D city information for İstanbul / İzmir ---------- */
+function v14dDistrictQuery(cityId){const b=V14D_CITY_BBOX[cityId];return `[out:json][timeout:45];relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"6\"](${b.south},${b.west},${b.north},${b.east});out body geom;`;}
+async function v14dFetchDistrictRelations(cityId){let last=null;for(const endpoint of V14D_OVERPASS_ENDPOINTS){try{const body=new URLSearchParams({data:v14dDistrictQuery(cityId)});const res=await fetch(endpoint,{method:"POST",body,headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"}});if(!res.ok)throw new Error(`Overpass ${res.status}`);return await res.json();}catch(err){last=err;}}throw last||new Error("District request failed");}
+function v14dSamePoint(a,b){return Math.abs(a[0]-b[0])<1e-5&&Math.abs(a[1]-b[1])<1e-5;}
+function v14dStitchWays(ways){const pool=ways.filter(w=>w.length>1).map(w=>w.slice());const rings=[];while(pool.length){let ring=pool.shift();let changed=true;while(changed&&pool.length){changed=false;const end=ring[ring.length-1],start=ring[0];for(let i=0;i<pool.length;i++){const w=pool[i];if(v14dSamePoint(end,w[0])){ring=ring.concat(w.slice(1));pool.splice(i,1);changed=true;break;}if(v14dSamePoint(end,w[w.length-1])){ring=ring.concat(w.slice(0,-1).reverse());pool.splice(i,1);changed=true;break;}if(v14dSamePoint(start,w[w.length-1])){ring=w.slice(0,-1).concat(ring);pool.splice(i,1);changed=true;break;}if(v14dSamePoint(start,w[0])){ring=w.slice(1).reverse().concat(ring);pool.splice(i,1);changed=true;break;}}}if(ring.length>=4){if(!v14dSamePoint(ring[0],ring[ring.length-1]))ring.push(ring[0]);rings.push(ring);}}return rings;}
+function v14dRelationToFeature(rel){const ways=(rel.members||[]).filter(m=>m.type==="way"&&(!m.role||m.role==="outer")&&Array.isArray(m.geometry)).map(m=>m.geometry.map(p=>[Number(p.lon),Number(p.lat)]).filter(p=>p.every(Number.isFinite)));const rings=v14dStitchWays(ways).filter(r=>r.length>=4);if(!rings.length)return null;const name=rel.tags?.name||rel.tags?.['name:en']||`District ${rel.id}`;return {type:"Feature",properties:{name},geometry:rings.length===1?{type:"Polygon",coordinates:[rings[0]]}:{type:"MultiPolygon",coordinates:rings.map(r=>[r])}};}
+function v14dFeatureCentroid(feature){const coords=feature.geometry.type==="Polygon"?feature.geometry.coordinates[0]:feature.geometry.coordinates?.[0]?.[0];if(!coords?.length)return null;let lat=0,lng=0,n=0;for(const p of coords){if(Number.isFinite(p[0])&&Number.isFinite(p[1])){lng+=p[0];lat+=p[1];n++;}}return n?{lat:lat/n,lng:lng/n}:null;}
+function v14dDistrictShade(cityId,index){const base=cityId==="istanbul"?198:cityId==="izmir"?164:180;return `hsl(${(base+index*47)%360} 34% 42%)`;}
+function v14dEnsureDistrictLabelClass(){if(window.__V14DDistrictLabel)return;window.__V14DDistrictLabel=class extends HtmlOverlay{constructor(item,cityId){super(item.position,"borough-label-overlay v14d-district-label");this.item=item;this.cityId=cityId;}onAdd(){super.onAdd();this.updateContent();}updateContent(){if(!this.div)return;const info=V14D_CITY_INFO[this.cityId];const weather=info.weather.get(this.item.name);this.div.innerHTML=`<div class="borough-label-name">${escapeHtml(this.item.name)}</div>${cityInfoState.weather&&weather?`<div class="borough-label-weather"><span>${weather.emoji}</span><b>${Math.round(weather.temperature)}°C</b><small>${escapeHtml(weather.label)}</small></div>`:""}`;}};}
+async function ensureV14DDistricts(cityId,force=false){const info=V14D_CITY_INFO[cityId];if(!info)return;if(info.ready&&!force)return;if(info.loading&&!force)return info.loading;info.loading=(async()=>{if(force&&info.layer){info.layer.setMap(null);info.layer=null;info.ready=false;}const data=await v14dFetchDistrictRelations(cityId);const features=(data.elements||[]).filter(e=>e.type==="relation"&&e.tags?.name).map(v14dRelationToFeature).filter(Boolean);if(!features.length)throw new Error("No district polygons");info.layer=new google.maps.Data();const added=info.layer.addGeoJson({type:"FeatureCollection",features});info.centroids=[];added.forEach((f,index)=>{const name=f.getProperty("name")||`District ${index+1}`;const raw=features.find(x=>x.properties.name===name);const position=raw&&v14dFeatureCentroid(raw);f.setProperty("__v14dColor",v14dDistrictShade(cityId,index));if(position)info.centroids.push({name,position});});info.ready=true;v14dEnsureDistrictLabelClass();info.labels.forEach(x=>x.setMap(null));info.labels=[];for(const item of info.centroids){const o=new window.__V14DDistrictLabel(item,cityId);o.setMap(map);o.setVisible(false);info.labels.push(o);}v14dApplyCityInfo(cityId);})().catch(err=>{console.warn(`${cityId} districts unavailable`,err);showToast(`${CITY_CONFIG[cityId].name} district boundaries are temporarily unavailable.`,3000);}).finally(()=>info.loading=null);return info.loading;}
+async function ensureV14DWeather(cityId,force=false){const info=V14D_CITY_INFO[cityId];if(!info.ready)await ensureV14DDistricts(cityId);if(!info.centroids.length)return;if(info.weather.size&&!force)return;if(info.weatherPromise&&!force)return info.weatherPromise;info.weatherPromise=(async()=>{const lats=info.centroids.map(x=>x.position.lat.toFixed(5)).join(","),lngs=info.centroids.map(x=>x.position.lng.toFixed(5)).join(",");const tz=cityId==="istanbul"||cityId==="izmir"?"Europe%2FIstanbul":"auto";const url=`https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lats)}&longitude=${encodeURIComponent(lngs)}&current=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m&temperature_unit=celsius&wind_speed_unit=kmh&timezone=${tz}`;const res=await fetch(url);if(!res.ok)throw new Error(`Weather ${res.status}`);let data=await res.json();if(!Array.isArray(data))data=[data];info.weather=new Map();info.centroids.forEach((item,i)=>{const c=data[i]?.current||{};info.weather.set(item.name,{temperature:Number(c.temperature_2m),windSpeed:Number(c.wind_speed_10m),windDirection:Number(c.wind_direction_10m),...weatherCodeInfo(c.weather_code)});});info.labels.forEach(x=>x.updateContent?.());})().finally(()=>info.weatherPromise=null);return info.weatherPromise;}
+function v14dWindGrid(cityId){const b=V14D_CITY_BBOX[cityId];const points=[];const rows=5,cols=7;for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)points.push({lat:b.south+(b.north-b.south)*(r+.5)/rows,lng:b.west+(b.east-b.west)*(c+.5)/cols});return points;}
+async function ensureV14DWind(cityId,force=false){const info=V14D_CITY_INFO[cityId];if(info.windPromise&&!force)return info.windPromise;if(force){info.wind.forEach(o=>o.setMap(null));info.wind=[];}info.windPromise=(async()=>{const points=v14dWindGrid(cityId),lats=points.map(p=>p.lat.toFixed(4)).join(","),lngs=points.map(p=>p.lng.toFixed(4)).join(",");const url=`https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lats)}&longitude=${encodeURIComponent(lngs)}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=kmh&timezone=Europe%2FIstanbul`;const res=await fetch(url);if(!res.ok)throw new Error(`Wind ${res.status}`);let data=await res.json();if(!Array.isArray(data))data=[data];ensureWindArrowOverlayClass();points.forEach((position,i)=>{const c=data[i]?.current||{};const o=new window.__V13FWindArrowOverlay(position,Number(c.wind_speed_10m)||0,Number(c.wind_direction_10m)||0);o.setMap(map);o.setVisible(currentCityId===cityId&&cityInfoState.wind);info.wind.push(o);});})().finally(()=>info.windPromise=null);return info.windPromise;}
+function v14dApplyCityInfo(cityId){const info=V14D_CITY_INFO[cityId];const active=currentCityId===cityId;if(info?.layer){info.layer.setMap(active&&cityInfoState.districts?map:null);info.layer.setStyle(f=>({fillColor:f.getProperty("__v14dColor")||"#607d8b",fillOpacity:cityInfoState.districts?.22:0,strokeColor:"#e4edf2",strokeOpacity:cityInfoState.districts?.42:0,strokeWeight:cityInfoState.districts?1:0,clickable:false,zIndex:2}));}const zoom=map?.getZoom?.()||12;info?.labels.forEach(o=>{o.setVisible(active&&(cityInfoState.districts||cityInfoState.weather)&&zoom>=9.8);o.updateContent?.();});info?.wind.forEach(o=>o.setVisible(active&&cityInfoState.wind));}
+
+/* ---------- v1.4D: Google POI clicks in our own panel ---------- */
+let v14dPoiBusy=false;
+function v14dPoiCategory(type){const t=v14dNormalize(type);if(/cafe|coffee|restaurant|food|bakery|bar/.test(t))return "Food";if(/supermarket|grocery|market|store/.test(t))return "Market";if(/hospital|doctor|pharmacy|health|dentist/.test(t))return "Health";if(/school|university|college/.test(t))return "School";if(/gym|stadium|sport/.test(t))return "Sport";if(/station|transit|airport/.test(t))return "Transport";if(/shop|shopping|mall/.test(t))return "Shopping";return "Other";}
+function v14dPoiHours(place){const hours=place.currentOpeningHours||place.regularOpeningHours;const lines=hours?.weekdayDescriptions||[];if(!lines.length)return "";const day=new Date().getDay();const mondayFirst=day===0?6:day-1;return lines[mondayFirst]||lines[0]||"";}
+async function v14dShowPoi(placeId,latLng){if(v14dPoiBusy)return;v14dPoiBusy=true;const content=el("detail-content");content.innerHTML=`<div class="detail-label">PLACE</div><h2>Loading place…</h2><div class="poi-loading">Fetching only the useful details.</div>`;openDetail();bringPanelToFront(el("detail-card"));try{const {Place}=await google.maps.importLibrary("places");const place=new Place({id:placeId,requestedLanguage:getActiveCityConfig().language||"en"});await place.fetchFields({fields:["displayName","formattedAddress","location","primaryTypeDisplayName","currentOpeningHours","regularOpeningHours","photos","businessStatus"]});const loc=place.location?{lat:place.location.lat(),lng:place.location.lng()}:{lat:latLng.lat(),lng:latLng.lng()};const name=place.displayName||"Map place";const type=place.primaryTypeDisplayName||"Place";const hours=v14dPoiHours(place);const photo=place.photos?.[0];const photoUrl=photo?.getURI?.({maxWidth:700,maxHeight:420});const status=String(place.businessStatus||"").replaceAll("_"," ").toLowerCase();content.innerHTML=`<div class="detail-label">${escapeHtml(String(type).toUpperCase())}</div><h2>${escapeHtml(name)}</h2><div class="sub">${escapeHtml(place.formattedAddress||CITY_CONFIG[currentCityId].name)}</div>${photoUrl?`<img class="poi-photo" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name)}" />`:""}<div class="detail-section">${status?`<div class="info-row"><span>Status</span><b>${escapeHtml(status)}</b></div>`:""}${hours?`<div class="poi-hours"><div class="info-section-title">TODAY</div><div class="poi-hours-line">${escapeHtml(hours)}</div></div>`:""}</div><div class="detail-section info-copy-section"><div class="info-section-title">WHAT IS IT?</div><p>${escapeHtml(`${name} is listed on Google Maps as ${String(type).toLowerCase()}.`)}</p></div><div class="detail-actions compact-action-row"><button class="secondary-btn compact-btn" id="v14d-poi-favorite">Add to Favorites</button><button class="primary-btn compact-btn" id="v14d-poi-route">Route here</button></div>`;content.querySelector("#v14d-poi-favorite")?.addEventListener("click",()=>openPlaceEditor(loc,name,place.formattedAddress||"",v14dPoiCategory(type)));content.querySelector("#v14d-poi-route")?.addEventListener("click",()=>{const center=lastUserPosition?.coords?{lat:lastUserPosition.coords.lat,lng:lastUserPosition.coords.lng}:{lat:map.getCenter().lat(),lng:map.getCenter().lng()};startRouteWithSegment({mode:"walk",walkStartName:lastUserPosition?.coords?"Current location":"Map centre",walkStartLat:center.lat,walkStartLng:center.lng,walkEndName:name,walkEndLat:loc.lat,walkEndLng:loc.lng,service:`Walk to ${name}`});});}catch(err){console.warn("Place details unavailable",err);const loc={lat:latLng.lat(),lng:latLng.lng()};content.innerHTML=`<div class="detail-label">MAP PLACE</div><h2>Place details unavailable</h2><div class="sub">The point is clickable, but Google Places details are not enabled for this key yet.</div><div class="detail-section info-copy-section"><p>You can still save this exact point to Favorites. Enable Places API (New) later for names, photos and opening hours.</p></div><div class="detail-actions compact-action-row"><button class="primary-btn compact-btn" id="v14d-poi-favorite">Add point to Favorites</button></div>`;content.querySelector("#v14d-poi-favorite")?.addEventListener("click",()=>openPlaceEditor(loc,"Saved place","","Other"));}finally{v14dPoiBusy=false;}}
+
+/* ---------- v1.4D: welcome/profile ---------- */
+let v14dPendingProfile=null;
+let v14dProfileStartupApplied=false;
+function v14dStoredProfile(){const p=localStorage.getItem(V14D_PROFILE_STORAGE);return p==="ela"||p==="kagan"?p:null;}
+function v14dSetVanilla(cityId){layerState.metro=false;layerState.rail=false;layerState.tram=false;layerState.places=false;cityInfoState.districts=false;cityInfoState.weather=false;cityInfoState.wind=false;activeFavoriteRouteId=null;transientTransportSelection=null;persistentTransportFocus=null;cityLayerMemory[cityId]={metro:false,rail:false,tram:false,places:false,districts:false,weather:false,wind:false};saveCurrentCityLayerMemory();try{localStorage.setItem(V14_CITY_LAYER_STATE_STORAGE,JSON.stringify(cityLayerMemory));}catch{}trafficLayer?.setMap(null);el("traffic-btn")?.classList.remove("active");el("panel-traffic-toggle")?.classList.remove("active");el("panel-traffic-toggle")?.setAttribute("aria-pressed","false");}
+async function v14dRunProfileStart(profile,{showWelcomeEffect=false}={}){if(!map){v14dPendingProfile=profile;return;}const target=profile==="ela"?"rome":"london";localStorage.setItem(V14D_PROFILE_STORAGE,profile);v14dSetVanilla(target);if(showWelcomeEffect){const screen=el("welcome-screen");screen?.classList.add("leaving");if(profile==="ela"){await v14dSleep(260);const heart=el("welcome-heart");heart?.classList.remove("show");void heart?.offsetWidth;heart?.classList.add("show");await v14dSleep(1030);}else await v14dSleep(480);screen?.classList.add("hidden");screen?.classList.remove("leaving");}
+  if(currentCityId!==target)await switchCity(target);else await switchCity(target,{recenter:true});v14dSetVanilla(target);applyLayerState();applyFavoriteCategoryVisibility();syncV13EPanelUI();syncV13FCityButtons();if(profile==="ela")showCityArrival({...CITY_CONFIG.rome,gesture:"Ela ❤️"});else showCityArrival({...CITY_CONFIG.london,gesture:""});v14dApplyCityTheme();}
+function v14dShowWelcome(){const screen=el("welcome-screen");screen?.classList.remove("hidden","leaving");hideModal("settings-modal");}
+document.querySelectorAll("[data-welcome-profile]").forEach(btn=>btn.addEventListener("click",()=>v14dRunProfileStart(btn.dataset.welcomeProfile,{showWelcomeEffect:true})));
+el("switch-profile-btn")?.addEventListener("click",()=>{hideModal("settings-modal");v14dShowWelcome();});
+function v14dApplyCityTheme(){document.body.classList.toggle("city-theme-rome",currentCityId==="rome");document.body.dataset.cityTheme=currentCityId;const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content=currentCityId==="rome"?"#07191b":"#0b1017";}
+
+/* ---------- v1.4D runtime overrides ---------- */
+const restoreCityLayerMemoryV14DBase=restoreCityLayerMemory;
+restoreCityLayerMemory=function(cityId){if(cityId!=="istanbul"&&cityId!=="izmir")return restoreCityLayerMemoryV14DBase(cityId);const saved=cityLayerMemory[cityId]||{};layerState.metro=!!saved.metro;layerState.rail=!!saved.rail;layerState.tram=!!saved.tram;layerState.places=!!saved.places;cityInfoState.districts=!!saved.districts;cityInfoState.weather=!!saved.weather;cityInfoState.wind=!!saved.wind;};
+
+const cityTransportAvailableV14DBase=cityTransportAvailable;
+cityTransportAvailable=function(){return currentCityId==="istanbul"||currentCityId==="izmir"?true:cityTransportAvailableV14DBase();};
+
+const toggleLayerV14DBase=toggleLayer;
+toggleLayer=async function(name){if((currentCityId==="istanbul"||currentCityId==="izmir")&&["metro","rail","tram"].includes(name)){activeFavoriteRouteId=null;transientTransportSelection=null;persistentTransportFocus=null;updateRouteFocusChip();updateItemFocusChip();layerState[name]=!layerState[name];if(layerState[name]){showToast(`Loading ${CITY_CONFIG[currentCityId].name} ${name}…`,1200);await ensureV14DCityTransit(currentCityId);}saveCurrentCityLayerMemory();applyLayerState();return;}return toggleLayerV14DBase(name);};
+
+const toggleCityInfoLayerV14DBase=toggleCityInfoLayer;
+toggleCityInfoLayer=async function(name){if(currentCityId!=="istanbul"&&currentCityId!=="izmir")return toggleCityInfoLayerV14DBase(name);cityInfoState[name]=!cityInfoState[name];saveCurrentCityLayerMemory();syncV13FCityButtons();try{if((name==="districts"||name==="weather")&&(cityInfoState.districts||cityInfoState.weather))await ensureV14DDistricts(currentCityId);if(name==="weather"&&cityInfoState.weather)await ensureV14DWeather(currentCityId);if(name==="wind"&&cityInfoState.wind)await ensureV14DWind(currentCityId);}catch(err){console.warn(err);cityInfoState[name]=false;showToast(`${name} layer could not load.`,2600);}applyLayerState();};
+
+const applyLayerStateV14DBase=applyLayerState;
+applyLayerState=function(){applyLayerStateV14DBase();if(currentCityId==="istanbul"||currentCityId==="izmir"){lineRenderings.forEach(i=>i.polyline.setVisible(false));stationOverlays.forEach(o=>o.setVisible(false));lineLabelOverlays.forEach(o=>o.setVisible(false));surfaceRenderings.forEach(i=>i.polyline.setVisible(false));surfaceStationOverlays.forEach(o=>o.setVisible(false));surfaceLabelOverlays.forEach(o=>o.setVisible(false));romeMetroRenderings.forEach(i=>i.polyline.setVisible(false));romeSurfaceRenderings.forEach(i=>i.polyline.setVisible(false));romeMetroStationOverlays.forEach(o=>o.setVisible(false));romeSurfaceStationOverlays.forEach(o=>o.setVisible(false));romeLineLabelOverlays.forEach(o=>o.setVisible(false));v14dApplyCityTransportState(currentCityId);v14dApplyCityInfo(currentCityId);}else{for(const id of ["istanbul","izmir"]){const s=V14D_CITY_TRANSIT[id];s?.renderings.forEach(i=>i.polyline.setVisible(false));s?.stationOverlays.forEach(o=>o.setVisible(false));s?.labelOverlays.forEach(o=>o.setVisible(false));v14dApplyCityInfo(id);}}v14dApplyCityTheme();};
+
+const updateV14CityUIV14DBase=updateV14CityUI;
+updateV14CityUI=function(){updateV14CityUIV14DBase();CITY_CONFIG.istanbul.status="İstanbul ready · live OSM transit with bundled Metro/Marmaray/Tram fallback + city information.";CITY_CONFIG.izmir.status="İzmir ready · live OSM transit with bundled Metro/İZBAN/Tram fallback + city information.";const status=el("city-data-status");if(status)status.textContent=getActiveCityConfig().status;v14dApplyCityTheme();v14dUpdateCityChoiceAvailability();};
+
+const switchCityV14DBase=switchCity;
+switchCity=async function(nextCityId,options={}){await switchCityV14DBase(nextCityId,options);if(currentCityId==="istanbul"||currentCityId==="izmir"){if(layerState.metro||layerState.rail||layerState.tram)await ensureV14DCityTransit(currentCityId).catch(()=>{});if(cityInfoState.districts||cityInfoState.weather)await ensureV14DDistricts(currentCityId).catch(()=>{});if(cityInfoState.weather)await ensureV14DWeather(currentCityId).catch(()=>{});if(cityInfoState.wind)await ensureV14DWind(currentCityId).catch(()=>{});}applyLayerState();updateV14CityUI();};
+
+function v14dUpdateCityChoiceAvailability(){if(!map)return;const bounds=map.getBounds?.();document.querySelectorAll("[data-city]").forEach(button=>{const id=button.dataset.city;const same=id===currentCityId;const visible=!!bounds?.contains?.(CITY_CONFIG[id].center);button.disabled=same&&visible;button.classList.toggle("returnable",same&&!visible);button.classList.toggle("active",same&&visible);button.setAttribute("aria-pressed",String(same&&visible));button.title=same&&!visible?`Return to ${CITY_CONFIG[id].name}`:same?`${CITY_CONFIG[id].name} is in view`:`Go to ${CITY_CONFIG[id].name}`;});}
+document.querySelectorAll("[data-city]").forEach(button=>button.addEventListener("click",event=>{if(button.dataset.city===currentCityId&&!map.getBounds()?.contains(CITY_CONFIG[currentCityId].center)){event.preventDefault();event.stopImmediatePropagation();switchCity(currentCityId,{recenter:true});}},true));
+
+const buildV13ESearchResultsV14DBase=buildV13ESearchResults;
+buildV13ESearchResults=function(query){const base=buildV13ESearchResultsV14DBase(query);if(currentCityId!=="istanbul"&&currentCityId!=="izmir")return base;const q=normalizeSearch(query),state=V14D_CITY_TRANSIT[currentCityId],out=[...base];for(const line of state.lineById.values())if(normalizeSearch(`${line.ref} ${line.name} ${line.displayName}`).includes(q))out.push({type:"v14d-city-line",line});for(const station of state.stations.values())if(normalizeSearch(`${station.name} ${station.services.map(v14dLineName).join(" ")}`).includes(q))out.push({type:"v14d-city-station",station});return out.slice(0,18);};
+const searchResultHtmlV14DBase=searchResultHtml;
+searchResultHtml=function(result,index){if(result.type==="v14d-city-line")return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon" style="background:${result.line.color};color:${idealTextColor(result.line.color)}">${escapeHtml(result.line.ref)}</div><div><div class="result-title">${escapeHtml(v14dLineName(result.line))}</div><div class="result-sub">${escapeHtml(CITY_CONFIG[result.line.city].name)} ${escapeHtml(result.line.family)}</div></div></button>`;if(result.type==="v14d-city-station")return `<button class="search-result" data-result-index="${index}" role="option"><div class="result-icon">${result.station.services.some(x=>x.family==="metro")?"M":result.station.services.some(x=>x.family==="rail")?"R":"T"}</div><div><div class="result-title">${escapeHtml(result.station.name)}</div><div class="result-sub">${escapeHtml(result.station.services.map(v14dLineName).join(" · "))}</div></div></button>`;return searchResultHtmlV14DBase(result,index);};
+const selectSearchResultV14DBase=selectSearchResult;
+selectSearchResult=function(result){if(result?.type==="v14d-city-line"){hideSearchResults();toggleLayersPanel(false);v14dSelectCityLine(result.line,{fit:true,showInfo:true});return;}if(result?.type==="v14d-city-station"){hideSearchResults();toggleLayersPanel(false);map.panTo({lat:result.station.lat,lng:result.station.lon});map.setZoom(15.5);v14dSelectCityStation(result.station,{showInfo:true});return;}return selectSearchResultV14DBase(result);};
+const resultTitleV14DBase=resultTitle;
+resultTitle=function(result){if(result?.type==="v14d-city-line")return v14dLineName(result.line);if(result?.type==="v14d-city-station")return result.station.name;return resultTitleV14DBase(result);};
+
+const routeStationsForServiceV14DBase=routeStationsForService;
+routeStationsForService=function(mode,service){for(const cityId of ["istanbul","izmir"]){const state=V14D_CITY_TRANSIT[cityId];if(state.lineById.has(service))return [...state.stations.values()].filter(s=>s.services.some(x=>x.id===service)).sort((a,b)=>a.name.localeCompare(b.name,"tr"));}return routeStationsForServiceV14DBase(mode,service);};
+const getStationForSegmentV14DBase=getStationForSegment;
+getStationForSegment=function(mode,id){if(String(id).startsWith("istanbul:")||String(id).startsWith("izmir:")){const cityId=String(id).split(":")[0];return V14D_CITY_TRANSIT[cityId].stations.get(id);}return getStationForSegmentV14DBase(mode,id);};
+const defaultServiceForStationV14DBase=defaultServiceForStation;
+defaultServiceForStation=function(mode,stationId){if(String(stationId).startsWith("istanbul:")||String(stationId).startsWith("izmir:")){const cityId=String(stationId).split(":")[0],station=V14D_CITY_TRANSIT[cityId].stations.get(stationId);return station?.services.find(s=>s.family===mode)?.id||station?.services[0]?.id||"";}return defaultServiceForStationV14DBase(mode,stationId);};
+const v13fServiceOptionsV14DBase=v13fServiceOptions;
+v13fServiceOptions=function(segment){if(currentCityId!=="istanbul"&&currentCityId!=="izmir"&&!String(segment.service).startsWith("istanbul-")&&!String(segment.service).startsWith("izmir-"))return v13fServiceOptionsV14DBase(segment);const cityId=String(segment.service).startsWith("izmir-")?"izmir":String(segment.service).startsWith("istanbul-")?"istanbul":currentCityId;const lines=[...V14D_CITY_TRANSIT[cityId].lineById.values()].filter(l=>l.family===segment.mode).sort((a,b)=>v14dLineName(a).localeCompare(v14dLineName(b),"tr",{numeric:true}));return lines.map(line=>`<option value="${escapeHtml(line.id)}" ${line.id===segment.service?"selected":""}>${escapeHtml(v14dLineName(line))}</option>`).join("");};
+const transportGeometryForSegmentV14DBase=transportGeometryForSegment;
+transportGeometryForSegment=function(segment){for(const cityId of ["istanbul","izmir"]){const state=V14D_CITY_TRANSIT[cityId];if(state.lineById.has(segment.service))return state.geometry.get(segment.service)||[];}return transportGeometryForSegmentV14DBase(segment);};
+const segmentColorV14DBase=segmentColor;
+segmentColor=function(segment){for(const cityId of ["istanbul","izmir"]){const line=V14D_CITY_TRANSIT[cityId].lineById.get(segment.service);if(line)return line.color;}return segmentColorV14DBase(segment);};
+const segmentDisplayNameV14DBase=segmentDisplayName;
+segmentDisplayName=function(raw){const segment=normalizeRouteSegment(raw);for(const cityId of ["istanbul","izmir"]){const line=V14D_CITY_TRANSIT[cityId].lineById.get(segment.service);if(line){const base=v14dLineName(line);return segment.startStationId&&segment.endStationId?`${base} · ${segment.startStationName||getStationForSegment(segment.mode,segment.startStationId)?.name||"Start"} → ${segment.endStationName||getStationForSegment(segment.mode,segment.endStationId)?.name||"End"}`:base;}}return segmentDisplayNameV14DBase(raw);};
+
+function v14dDefaultService(cityId,mode){return [...V14D_CITY_TRANSIT[cityId].lineById.values()].find(l=>l.family===mode)?.id||"";}
+const openRouteEditorV14DBase=openRouteEditor;
+openRouteEditor=async function(){if(currentCityId!=="istanbul"&&currentCityId!=="izmir")return openRouteEditorV14DBase();await ensureV14DCityTransit(currentCityId);routeEditorSegments=[normalizeRouteSegment({mode:"metro",service:v14dDefaultService(currentCityId,"metro")})];el("route-name-input").value="";renderRouteEditorSegments();el("route-editor-sheet").classList.remove("hidden");document.body.classList.add("detail-open");restorePanelPosition(el("route-editor-sheet"));bringPanelToFront(el("route-editor-sheet"));};
+const addRouteEditorSegmentV14DBase=addRouteEditorSegment;
+addRouteEditorSegment=function(){if(currentCityId!=="istanbul"&&currentCityId!=="izmir")return addRouteEditorSegmentV14DBase();routeEditorSegments.push(normalizeRouteSegment({mode:"metro",service:v14dDefaultService(currentCityId,"metro")}));renderRouteEditorSegments();};
+
+const renderRouteEditorSegmentsV14DBase=renderRouteEditorSegments;
+renderRouteEditorSegments=function(){if(currentCityId!=="istanbul"&&currentCityId!=="izmir")return renderRouteEditorSegmentsV14DBase();const cityId=currentCityId;routeEditorSegments=routeEditorSegments.map(segment=>{const n=normalizeRouteSegment(segment);if(["metro","rail","tram"].includes(n.mode)&&!V14D_CITY_TRANSIT[cityId].lineById.has(n.service)){n.service=v14dDefaultService(cityId,n.mode);n.startStationId="";n.endStationId="";n.startStationName="";n.endStationName="";}return n;});const node=el("route-segments");if(!node)return;node.innerHTML=routeEditorSegments.map((s,i)=>routeSegmentEditorHtml(s,i)).join("");node.querySelectorAll("[data-segment-mode]").forEach(select=>select.addEventListener("change",()=>{const i=Number(select.dataset.segmentMode),mode=select.value;routeEditorSegments[i]=normalizeRouteSegment({mode,service:["metro","rail","tram"].includes(mode)?v14dDefaultService(cityId,mode):""});renderRouteEditorSegments();}));node.querySelectorAll("[data-segment-service]").forEach(control=>{if(control.tagName==="SELECT")control.addEventListener("change",()=>{const s=routeEditorSegments[Number(control.dataset.segmentService)];s.service=control.value;s.startStationId="";s.endStationId="";s.startStationName="";s.endStationName="";renderRouteEditorSegments();});else control.addEventListener("input",()=>routeEditorSegments[Number(control.dataset.segmentService)].service=control.value);});node.querySelectorAll("[data-segment-start]").forEach(control=>control.addEventListener("change",()=>{const s=routeEditorSegments[Number(control.dataset.segmentStart)];s.startStationId=control.value;s.startStationName=getStationForSegment(s.mode,control.value)?.name||"";if(s.endStationId===s.startStationId){s.endStationId="";s.endStationName="";}renderRouteEditorSegments();}));node.querySelectorAll("[data-segment-end]").forEach(control=>control.addEventListener("change",()=>{const s=routeEditorSegments[Number(control.dataset.segmentEnd)];s.endStationId=control.value;s.endStationName=getStationForSegment(s.mode,control.value)?.name||"";if(s.endStationId===s.startStationId){s.endStationId="";s.endStationName="";showToast("Start and end stations need to be different.");}renderRouteEditorSegments();}));node.querySelectorAll("[data-remove-segment]").forEach(button=>button.addEventListener("click",()=>{routeEditorSegments.splice(Number(button.dataset.removeSegment),1);if(!routeEditorSegments.length)routeEditorSegments.push(normalizeRouteSegment({mode:"metro",service:v14dDefaultService(cityId,"metro")}));renderRouteEditorSegments();}));v14cInstallWalkEditorHandlers?.();refreshPreciseRouteHighlights();};
+
+const startRouteWithSegmentV14DBase=startRouteWithSegment;
+startRouteWithSegment=async function(segment){const n=normalizeRouteSegment(segment);const isCityService=String(n.service).startsWith("istanbul-")||String(n.service).startsWith("izmir-");if(currentCityId!=="istanbul"&&currentCityId!=="izmir"&&!isCityService)return startRouteWithSegmentV14DBase(segment);const cityId=isCityService?(String(n.service).startsWith("izmir-")?"izmir":"istanbul"):currentCityId;await ensureV14DCityTransit(cityId);transientTransportSelection=null;persistentTransportFocus=null;updateItemFocusChip();closeDetail(false);routeEditorSegments=[n];el("route-name-input").value="";renderRouteEditorSegments();el("route-editor-sheet").classList.remove("hidden");document.body.classList.add("detail-open");restorePanelPosition(el("route-editor-sheet"));bringPanelToFront(el("route-editor-sheet"));showToast(n.startStationId?"Route started here. Choose the other station.":"Route started. Choose start and end stations.",2600);};
+
+const activateFavoriteRouteV14DBase=activateFavoriteRoute;
+activateFavoriteRoute=function(routeId,options={}){const route=favoriteRoutes.find(x=>x.id===routeId);if(!route||!["istanbul","izmir"].includes(getRouteCityId(route)))return activateFavoriteRouteV14DBase(routeId,options);activeFavoriteRouteId=route.id;transientTransportSelection=null;persistentTransportFocus=null;route.useCount=Number(route.useCount||0)+1;route.lastUsedAt=Date.now();saveFavoriteRoutes();layerState.metro=route.segments?.some(s=>s.mode==="metro")||false;layerState.rail=route.segments?.some(s=>s.mode==="rail")||false;layerState.tram=route.segments?.some(s=>s.mode==="tram")||false;layerState.places=false;applyLayerState();updateRouteFocusChip();updateItemFocusChip();focusFavoriteRoute(route);if(options.showInfo!==false)showFavoriteRouteInfo(route);refreshPreciseRouteHighlights();};
+
+/* More aggressive London geometry thinning at wide zooms without sacrificing curves. */
+let v14dLondonTubeTier="";
+function v14dTubePointLimit(){const z=map?.getZoom?.()||12;return z<10?85:z<11.5?150:z<13?280:520;}
+const renderTubeLinesV14DBase=renderTubeLines;
+renderTubeLines=function(){if(currentCityId!=="london")return renderTubeLinesV14DBase();lineRenderings.forEach(i=>i.polyline.setMap(null));lineRenderings=[];const limit=v14dTubePointLimit();for(const line of TUBE_LINES){for(const rawPath of lineGeometryRegistry.get(line.id)||[]){const path=v13fThinPath(rawPath,limit);if(path.length<2)continue;if(line.id==="northern"){const casing=new google.maps.Polyline({map,path,geodesic:false,strokeColor:"#FFFFFF",strokeOpacity:0,strokeWeight:8,zIndex:17,clickable:false,visible:layerState.metro});lineRenderings.push({polyline:casing,line,role:"casing"});}const main=new google.maps.Polyline({map,path,geodesic:false,strokeColor:line.color,strokeOpacity:0,strokeWeight:5,zIndex:20,clickable:false,visible:layerState.metro});lineRenderings.push({polyline:main,line,role:"main"});const hit=new google.maps.Polyline({map,path,geodesic:false,strokeColor:line.color,strokeOpacity:.001,strokeWeight:20,zIndex:55,clickable:true,visible:layerState.metro});hit.addListener("click",()=>selectMetroLine(line.id,{showInfo:true}));lineRenderings.push({polyline:hit,line,role:"hit"});}}};
+function v14dMaybeRefreshLondonGeometry(){if(currentCityId!=="london"||!lineGeometryRegistry.size)return;const z=map?.getZoom?.()||12;const tier=z<10?"far":z<11.5?"city":z<13?"mid":"near";if(tier===v14dLondonTubeTier)return;v14dLondonTubeTier=tier;renderTubeLines();applyLayerState();}
+
+const initMapV14DBase=initMap;
+initMap=function(){initMapV14DBase();map.setOptions({clickableIcons:true});map.addListener("click",event=>{if(event.placeId){event.stop?.();v14dShowPoi(event.placeId,event.latLng);}});map.addListener("idle",()=>{v14dUpdateCityChoiceAvailability();v14dMaybeRefreshLondonGeometry();if(currentCityId==="istanbul"||currentCityId==="izmir")v14dApplyCityInfo(currentCityId);});map.addListener("zoom_changed",()=>{v14dMaybeRefreshLondonGeometry();v14dUpdateCityChoiceAvailability();});const profile=v14dStoredProfile();if(!profile){setTimeout(v14dShowWelcome,120);}else if(!v14dProfileStartupApplied){v14dProfileStartupApplied=true;setTimeout(()=>v14dRunProfileStart(profile,{showWelcomeEffect:false}),180);}if(v14dPendingProfile){const p=v14dPendingProfile;v14dPendingProfile=null;setTimeout(()=>v14dRunProfileStart(p,{showWelcomeEffect:true}),100);}v14dApplyCityTheme();};
+
+/* Current-city refresh path for Istanbul / İzmir. */
+el("refresh-tfl-btn")?.addEventListener("click",async event=>{if(currentCityId!=="istanbul"&&currentCityId!=="izmir")return;event.stopImmediatePropagation();hideModal("settings-modal");showToast(`Refreshing ${CITY_CONFIG[currentCityId].name} transit…`,1600);await ensureV14DCityTransit(currentCityId,true);applyLayerState();showToast("Transport refreshed.",1400);},true);
+
+/* Make the city selector text truthful after D. */
+CITY_CONFIG.istanbul.status="İstanbul ready · Metro / Marmaray / Tram + city-information architecture.";
+CITY_CONFIG.izmir.status="İzmir ready · Metro / İZBAN / Tram + city-information architecture.";
+CITY_CONFIG.rome.status="Rome ready · Metro / Rail / Tram + Municipi / weather / wind.";
+
+/* Update attribution for city-specific open data. */
+const updateDataAttributionV14DBase=updateDataAttributionV14B;
+updateDataAttributionV14B=function(){updateDataAttributionV14DBase();const node=el("data-attribution");if(!node)return;if(currentCityId==="istanbul")node.textContent=`İstanbul transport ${V14D_CITY_TRANSIT.istanbul.source||"open data"} · Districts © OpenStreetMap contributors · Weather © Open-Meteo`;if(currentCityId==="izmir")node.textContent=`İzmir transport ${V14D_CITY_TRANSIT.izmir.source||"open data"} · Districts © OpenStreetMap contributors · Weather © Open-Meteo`;};
+
+/* Show welcome immediately if there is no remembered profile. */
+if(!v14dStoredProfile())setTimeout(()=>el("welcome-screen")?.classList.remove("hidden"),0);
+
+console.info(`Our Cities Map ${V14D_VERSION} patch loaded`);
+
+/* ---------- v1.4D polish patch ---------- */
+const v14dRunProfileStartCore = v14dRunProfileStart;
+v14dRunProfileStart = async function(profile, options={}) {
+  localStorage.setItem(V14D_PROFILE_STORAGE, profile);
+  if (!map) {
+    v14dPendingProfile = profile;
+    const screen = el("welcome-screen");
+    screen?.classList.add("leaving");
+    setTimeout(() => { screen?.classList.add("hidden"); screen?.classList.remove("leaving"); }, 460);
+    return;
+  }
+  return v14dRunProfileStartCore(profile, options);
+};
+
+/* Smooth the bundled Rome fallback through the known stations. Live Roma Mobilità
+   geometry remains preferred; this only improves the offline/fallback appearance. */
+function v14dCatmullRomCoords(coords, subdivisions=4) {
+  if (!Array.isArray(coords) || coords.length < 3) return coords || [];
+  const out=[];
+  const get=i=>coords[Math.max(0,Math.min(coords.length-1,i))];
+  for(let i=0;i<coords.length-1;i++){
+    const p0=get(i-1),p1=get(i),p2=get(i+1),p3=get(i+2);
+    for(let j=0;j<subdivisions;j++){
+      const t=j/subdivisions,t2=t*t,t3=t2*t;
+      const x=.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3);
+      const y=.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3);
+      out.push([x,y]);
+    }
+  }
+  out.push(coords[coords.length-1]);
+  return out;
+}
+const v14dRomeFallbackBase = v14cRomeStaticCoreBundle;
+v14cRomeStaticCoreBundle = function() {
+  const bundle = v14dRomeFallbackBase();
+  for (const feature of bundle?.linesGeo?.features || []) {
+    if (feature?.geometry?.type === "LineString") feature.geometry.coordinates = v14dCatmullRomCoords(feature.geometry.coordinates, 4);
+  }
+  return bundle;
+};
+
+/* Keep wide London views light: show interchange nodes first, all stations when closer. */
+const applyLayerStateV14DPolishBase = applyLayerState;
+applyLayerState = function() {
+  applyLayerStateV14DPolishBase();
+  if (currentCityId === "london" && layerState.metro && !getActiveFavoriteRoute()) {
+    const zoom = map?.getZoom?.() || 12;
+    if (zoom < 10.9 && !getTransportSelection()) {
+      stationOverlays.forEach(overlay => {
+        const interchange = (overlay.station?.lines?.length || 0) > 1;
+        overlay.setVisible(interchange);
+      });
+      lineLabelOverlays.forEach((overlay,index) => overlay.setVisible(index % 2 === 0));
+    }
+  }
+};
+
+console.info("v1.4D polish patch ready");
