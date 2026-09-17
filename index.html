@@ -10,7 +10,7 @@
   <title>Everything App by Kağan</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.5" />
+  <link rel="stylesheet" href="styles.css?v=1.5A" />
 </head>
 <body>
   <main id="app">
@@ -93,6 +93,7 @@
             <button id="favorites-manage-btn" class="tiny-panel-action">Manage</button>
           </div>
           <div id="favorite-category-row" class="layer-toggle-row favorite-toggle-row" aria-label="Favorite categories">
+            <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Avoid" aria-pressed="false"><span class="panel-layer-icon">❌</span><span class="panel-layer-label">Not to Go</span></button>
             <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="all" aria-pressed="false"><span class="panel-layer-icon">★</span><span class="panel-layer-label">All</span></button>
             <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="School" aria-pressed="false"><span class="panel-layer-icon">🎓</span><span class="panel-layer-label">School</span></button>
             <button class="panel-layer-toggle favorite-category-toggle" data-favorite-category="Food" aria-pressed="false"><span class="panel-layer-icon">🍴</span><span class="panel-layer-label">Food</span></button>
@@ -226,10 +227,18 @@
       <input id="place-name-input" class="form-control" type="text" placeholder="e.g. Imperial College London" />
       <label class="field-label" for="place-category-input">Category</label>
       <select id="place-category-input" class="form-control">
-        <option>School</option><option>Food</option><option>Market</option><option>Health</option><option>Home</option><option>Shopping</option><option>Sport</option><option>Social</option><option>Transport</option><option>Tech</option><option>Admin</option><option selected>Other</option>
+<option value="Avoid">❌ Places Not to Go</option><option>School</option><option>Food</option><option>Market</option><option>Health</option><option>Home</option><option>Shopping</option><option>Sport</option><option>Social</option><option>Transport</option><option>Tech</option><option>Admin</option><option selected>Other</option>
       </select>
       <label class="field-label" for="place-note-input">Note</label>
       <input id="place-note-input" class="form-control" type="text" placeholder="Optional note" />
+      <div id="account-place-scope-wrap" class="account-scope-field">
+        <label class="field-label" for="account-place-collection">Save to collection</label>
+        <select id="account-place-collection" class="form-control">
+          <option data-own="1" value="kagan">My favorites</option>
+          <option value="together">Together ❤️</option>
+        </select>
+        <small>Available after signing into Accounts. Both partners can view each other's shared favorites.</small>
+      </div>
       <label class="favorite-important-row" for="place-important-input">
         <input id="place-important-input" type="checkbox" />
         <span><b>Important favorite</b><small>Show a larger marker and keep its name visible on the map.</small></span>
@@ -325,7 +334,87 @@
         <button id="replace-key-btn" class="secondary-btn">Replace Google Maps key</button>
         <button id="refresh-tfl-btn" class="secondary-btn">Refresh transport data</button>
         <button id="switch-profile-btn" class="secondary-btn">Switch profile</button>
+        <button id="accounts-btn" class="secondary-btn">🔐 Accounts & shared data</button>
         <p class="fineprint">Metro, Rail and Tram data are cached on your device for 24 hours to make mobile loading faster.</p>
+      </div>
+    </section>
+
+
+    <!-- v1.5A account settings: account identity is Supabase Auth, NEVER the decorative welcome profile. -->
+    <section id="account-modal" class="modal hidden" aria-label="Private accounts and shared data">
+      <div class="modal-card account-modal-card glass">
+        <button id="account-close" class="detail-close" aria-label="Close account settings">×</button>
+        <div class="modal-kicker">EVERYTHING APP · V1.5A</div>
+        <h2>Our Accounts ❤️</h2>
+        <p id="account-identity" class="account-help">Not signed in</p>
+        <p id="account-status" class="account-status" role="status" aria-live="polite">Existing favorites stay on this device until you explicitly import them.</p>
+
+        <section id="account-configuration" class="account-section">
+          <h3>1 · Connect your private database</h3>
+          <p class="account-help">Create a Supabase project, run cloud-schema.sql, and invite both users. Enter only the Project URL and the <b>publishable</b> key. Never enter a secret or service_role key.</p>
+          <label class="field-label" for="account-project-url">Project URL</label>
+          <input id="account-project-url" class="form-control" type="url" autocomplete="off" placeholder="https://yourproject.supabase.co" />
+          <label class="field-label" for="account-public-key">Publishable key (safe for browser)</label>
+          <input id="account-public-key" class="form-control" type="password" autocomplete="off" placeholder="sb_publishable_..." />
+          <button id="account-connect" class="primary-btn full-btn">Connect</button>
+        </section>
+
+        <section id="account-sign-in" class="account-section hidden">
+          <h3>2 · Sign in</h3>
+          <p class="account-help">Use only the email address invited through your private Supabase project.</p>
+          <label class="field-label" for="account-email">Email</label>
+          <input id="account-email" class="form-control" type="email" autocomplete="email" placeholder="Your invited email" />
+          <label class="field-label" for="account-password">Password</label>
+          <input id="account-password" class="form-control" type="password" autocomplete="current-password" placeholder="Your password" />
+          <button id="account-signin-btn" class="primary-btn full-btn">Sign in</button>
+        </section>
+
+        <section id="account-pending" class="account-section hidden">
+          <h3>Waiting for pairing</h3>
+          <p class="account-help">You have a valid login but cannot access any workspace until the project owner runs PAIR_ACCOUNTS.sql with both Auth user UUIDs.</p>
+          <button id="account-refresh-member" class="secondary-btn">Refresh membership</button>
+        </section>
+
+        <section id="account-workspace" class="account-section hidden">
+          <div class="account-section-head"><h3>Our private workspace</h3><button id="account-signout" class="tiny-panel-action">Sign out</button></div>
+          <p id="account-mode" class="account-help">Local map active</p>
+          <div class="account-action-grid">
+            <button id="account-download-local" class="secondary-btn">↓ Backup local data</button>
+            <button id="account-import" class="primary-btn">↑ Import my existing favorites</button>
+            <button id="account-cloud-activate" class="secondary-btn">Use cloud workspace</button>
+            <button id="account-cloud-local" class="secondary-btn hidden">Use original device data</button>
+            <button id="account-refresh" class="secondary-btn">↻ Refresh shared data</button>
+            <button id="account-retry-sync" class="secondary-btn">Retry pending sync</button>
+            <button id="account-download-cloud" class="secondary-btn">↓ Export cloud + history</button>
+            <button id="account-undo" class="secondary-btn">↶ Undo recent deletion</button>
+          </div>
+          <p class="account-help">Personal collections are visible to both partners, but their creator controls edits. Together is shared. Private notes are visible only to the author. Passwords and coordinates are never needed for account setup.</p>
+          <label class="field-label" for="account-new-collection">Your default collection</label>
+          <select id="account-new-collection" class="form-control"><option value="kagan" data-own="1">My collection</option><option value="together">Together ❤️</option></select>
+          <h3>Favorite places and routes</h3>
+          <div id="account-entry-list" class="account-list"></div>
+          <h3>Notes on any location</h3>
+          <p class="account-help">Open a place and tap Add note, or enter a location name here. You can create notes without favoriting a place.</p>
+          <label class="field-label" for="account-note-place">Place</label>
+          <input id="account-note-place" class="form-control" maxlength="160" placeholder="Place name" />
+          <label class="field-label" for="account-note-text">Your note</label>
+          <textarea id="account-note-text" class="form-control account-note-text" rows="3" maxlength="4000" placeholder="A memory, warning or something to remember…"></textarea>
+          <label class="field-label" for="account-note-visibility">Who can read this?</label>
+          <select id="account-note-visibility" class="form-control"><option value="shared">Both of us ❤️</option><option value="private">Only me</option></select>
+          <button id="account-note-save" class="primary-btn full-btn">Save note</button>
+          <div id="account-notes-list" class="account-list"></div>
+          <h3>Trash & undo</h3>
+          <div id="account-trash-list" class="account-list"></div>
+          <h3>Earlier versions</h3>
+          <p class="account-help">Use History beside an item to see and restore earlier versions. Cloud data is not deleted permanently by this app.</p>
+          <div id="account-history-list" class="account-list"></div>
+          <h3>Account password</h3>
+          <label class="field-label" for="account-new-password">Set/change password after accepting invitation</label>
+          <input id="account-new-password" class="form-control" type="password" autocomplete="new-password" placeholder="At least 12 characters" />
+          <button id="account-update-password" class="secondary-btn">Update password</button>
+        </section>
+        <button id="account-open-setup" class="tiny-panel-action">Change database connection settings</button>
+        <div class="account-help">Supabase session stays on this browser unless you sign out. Do not use shared/public devices for private notes. This is an opt-in feature until configured.</div>
       </div>
     </section>
 
@@ -348,6 +437,13 @@
     }
   </script>
 
-  <script src="app.js?v=1.5"></script>
+  <script src="app.js?v=1.5A"></script>
+  <script src="accounts.js?v=1.5A"></script>
+  <script>
+    // A refreshed, network-first shell prevents stale UI after future releases.
+    if (location.protocol === "https:" && "serviceWorker" in navigator) {
+      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(console.warn));
+    }
+  </script>
 </body>
 </html>

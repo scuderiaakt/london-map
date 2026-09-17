@@ -258,7 +258,7 @@ function initOverlayClasses() {
     onAdd() {
       super.onAdd();
       this.div.innerHTML = `
-        <div class="place-pin" style="background:${this.place.color}"></div>
+        <div class="place-pin ${this.place.category === "Avoid" ? "avoid-pin" : ""}" style="background:${this.place.color}">${this.place.category === "Avoid" ? "×" : ""}</div>
         ${this.emphasized ? `<div class="place-label">${escapeHtml(this.place.name)}</div>` : ""}
       `;
       this.div.title = this.place.name;
@@ -3385,6 +3385,7 @@ const V13E_FAVORITE_FILTERS_STORAGE = "londonMap.favoriteFilters.v1";
 const V13E_RECENT_SEARCHES_STORAGE = "londonMap.recentSearches.v1";
 
 const FAVORITE_CATEGORY_META = [
+  { id: "Avoid", icon: "❌", color: "#C93B4D" },
   { id: "School", icon: "🎓", color: "#7F77FF" },
   { id: "Food", icon: "🍴", color: "#C38BFF" },
   { id: "Market", icon: "🛒", color: "#F4B544" },

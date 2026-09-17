@@ -2483,3 +2483,33 @@ body.city-theme-izmir .add-action {
 .plane-route-marker{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:11px;background:rgba(7,13,22,.90);border:1px solid rgba(255,255,255,.20);box-shadow:0 8px 26px rgba(0,0,0,.40);color:#fff;font-size:8px;font-weight:900;white-space:nowrap;pointer-events:none;z-index:120;}
 .plane-route-marker svg{width:22px;height:22px;color:#fff;transform:rotate(20deg);}
 @media(max-width:720px){.recent-search-head{font-size:7.5px}.plane-route-marker span{display:none}.plane-route-marker{padding:5px;border-radius:50%}.plane-route-marker svg{width:20px;height:20px}}
+
+/* v1.5A private cloud workspace */
+.account-modal-card { max-height: min(88vh, 860px); overflow-y: auto; width: min(630px, calc(100vw - 24px)); padding-bottom: max(20px,env(safe-area-inset-bottom)); }
+.account-modal-card h3 { margin: 17px 0 9px; font-size: 14px; }
+.account-section { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; display: grid; gap: 8px; }
+.account-section-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.account-section-head h3 { margin: 0; }
+.account-help { font-size: 12px; line-height: 1.55; color: var(--muted); margin: 3px 0; }
+.account-status { border: 1px solid rgba(74,211,180,.25); background: rgba(74,211,180,.08); border-radius: 11px; padding: 10px; font-size: 12px; line-height: 1.5; }
+.account-status.account-error { border-color: rgba(242,106,125,.55); color: #ffadbb; background: rgba(242,106,125,.09); }
+.account-action-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+.account-action-grid button { min-height: 42px; padding: 9px; white-space: normal; font-size: 12px; }
+.account-list { display: grid; gap: 6px; max-height: 330px; overflow-y: auto; }
+.account-list-item { padding: 10px; border: 1px solid var(--line); background: rgba(255,255,255,.035); border-radius: 12px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 7px; }
+.account-list-item>div:first-child { flex: 1; min-width: 160px; }
+.account-list-item b,.account-list-item small { display: block; overflow-wrap: anywhere; }
+.account-list-item small { margin-top: 5px; font-size: 11px; color: var(--muted); }
+.account-list-item p { font-size: 12px; line-height: 1.5; margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.account-list-item button { background: rgba(255,255,255,.1); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 7px 8px; font-size: 11px; cursor: pointer; }
+.account-row-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.account-readonly { font-size: 11px; color: var(--muted); }
+.account-note-text { min-height: 80px; resize: vertical; }
+.account-scope-field { display: grid; gap: 4px; }
+.account-scope-field small { font-size: 10px; color: var(--muted); }
+@media (max-width: 530px) { .account-modal-card { max-height: 92dvh; margin: 2vh auto; padding: 17px 12px; } .account-action-grid { grid-template-columns: 1fr 1fr; } .account-list-item { flex-direction: column; } }
+
+/* Personal Places Not to Go markers; not a public street-safety measure. */
+.place-pin.avoid-pin { display:flex; justify-content:center; align-items:center; font-size:18px; font-weight:800; color:#fff; border:2px solid #fff; box-shadow:0 0 0 2px rgba(220,45,69,.32); }
+
+.account-place-notes {border-top:1px solid var(--line); margin-top:10px; padding-top:9px;} .account-note-preview {font-size:12px;line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere;color:var(--text);}
