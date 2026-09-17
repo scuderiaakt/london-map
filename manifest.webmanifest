@@ -1,21 +1,17 @@
 {
-  "name": "London Life Map",
-  "short_name": "London Map",
+  "name": "Everything App by Kağan — Our Cities",
+  "short_name": "Our Cities",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#0b1017",
-  "theme_color": "#0b1017",
-  "description": "Personal London map with Google Maps, traffic, satellite view and a custom TfL Underground overlay.",
+  "background_color": "#101e30",
+  "theme_color": "#101e30",
   "icons": [
     {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ]
 }

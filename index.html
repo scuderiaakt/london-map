@@ -9,8 +9,9 @@
   <meta name="apple-mobile-web-app-title" content="Everything App" />
   <title>Everything App by Kağan</title>
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=1.5A" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css?v=1.5B" />
+  <link rel="stylesheet" href="navigation.css?v=1.5B">
 </head>
 <body>
   <main id="app">
@@ -284,8 +285,8 @@
         <button class="navigation-mode" data-nav-mode="drive"><span>🚗</span><b>Car</b><small>Traffic-aware</small></button>
         <button class="navigation-mode" data-nav-mode="transit"><span>🚇</span><b>Public transport</b><small>Transfers included</small></button>
         <button class="navigation-mode" data-nav-mode="walk"><span>🚶</span><b>Walk</b><small>Walkable roads</small></button>
-        <button class="navigation-mode" data-nav-mode="taxi"><span>🚕</span><b>Taxi</b><small>Traffic + fare estimate</small></button>
-        <button class="navigation-mode navigation-mode-fastest" data-nav-mode="fastest"><span>⚡</span><b>Fastest</b><small>Any mode · air included</small></button>
+        <button class="navigation-mode" data-nav-mode="taxi"><span>🚕</span><b>Taxi</b><small>Road time · pickup extra</small></button>
+        <button class="navigation-mode navigation-mode-fastest" data-nav-mode="fastest"><span>⚡</span><b>Fastest</b><small>Compare journey times</small></button>
         <button class="navigation-mode navigation-mode-custom" data-nav-mode="custom"><span>★</span><b>Custom route</b><small>Build it yourself</small></button>
       </div>
       <div id="navigation-status" class="sub detail-section">Choose a mode to calculate routes.</div>
@@ -421,24 +422,12 @@
     <div id="toast" class="toast glass hidden" role="status" aria-live="polite"></div>
   </main>
 
-  <script>
-    // Development: prevent old localhost service workers from serving stale JavaScript.
-    if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.getRegistrations()
-          .then(registrations => registrations.forEach(r => r.unregister()))
-          .catch(() => {});
-      }
-      if ("caches" in window) {
-        caches.keys()
-          .then(keys => Promise.all(keys.map(k => caches.delete(k))))
-          .catch(() => {});
-      }
-    }
-  </script>
 
-  <script src="app.js?v=1.5A"></script>
-  <script src="accounts.js?v=1.5A"></script>
+
+  <script src="app.js?v=1.5B"></script>
+  <script src="accounts.js?v=1.5B"></script>
+  <script src="navigation-core.js?v=1.5B"></script>
+  <script src="navigation.js?v=1.5B"></script>
   <script>
     // A refreshed, network-first shell prevents stale UI after future releases.
     if (location.protocol === "https:" && "serviceWorker" in navigator) {

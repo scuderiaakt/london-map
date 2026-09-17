@@ -1,0 +1,26 @@
+✔ coordinate validation rejects null, strings and impossible positions (1.5093ms)
+✔ segment projection measures progress between sparse vertices (0.8551ms)
+✔ heading and off-route hysteresis reject weak GPS (0.1733ms)
+✔ loop crossings do not jump thousands of metres ahead (0.1215ms)
+✔ comparison issues three requests, reuses car for taxi and handles partial failures (3.5004ms)
+✔ new requests and endpoint changes invalidate late route responses (4.9035ms)
+✔ location permission denial is actionable, End clears watches and timers (16.6235ms)
+✔ accurate movement advances steps and arrives without restarting GPS (2.1999ms)
+✔ low battery replaces GPS watch; poor accuracy pauses progress (1.4001ms)
+✔ rerouting requires sustained deviation and respects data saver (2.3846ms)
+✔ reroute completion after End cannot reopen or replace guidance (3.8482ms)
+✔ offline requests make no API calls; packs work without Google or Supabase (1.6909ms)
+✔ pack quota failure is visible and does not report saved (0.9013ms)
+✔ custom car preferences reach provider; original custom editor remains accessible (1.0606ms)
+✔ hidden document suspends GPS and resumes with a fresh watch (1.2159ms)
+✔ every precached release asset exists (20.7931ms)
+✔ service worker ignores APIs, tiles, other apps and non-GET (0.772ms)
+✔ offline navigation serves scoped shell; known assets remain available (0.8228ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 109.5465
