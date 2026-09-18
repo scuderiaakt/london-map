@@ -1,0 +1,45 @@
+/* v1.5D: intentionally limited to map route choices, navigation HUD and phones. */
+.v15d-alt-label{position:absolute;transform:translate(-50%,-50%);z-index:82;min-width:64px;min-height:35px;padding:6px 9px;background:#392a1b;color:#fff4dc;border:2px solid #f3ba72;border-radius:999px;font-size:12px;font-weight:850;white-space:nowrap;box-shadow:0 3px 15px #000a;cursor:pointer;touch-action:manipulation}
+.v15d-alt-label:focus-visible{outline:3px solid #fff;outline-offset:3px}
+#navigation-results .navigation-result.active{border-color:#a9e7d3!important;background:rgba(65,143,121,.22)!important;box-shadow:inset 3px 0 #a9e7d3}
+.v15d-payment{margin-top:9px;background:#15332c;border:1px solid #537f72;border-radius:10px;padding:10px;line-height:1.5}
+.v15d-payment strong{font-size:12px;color:#bdf5dc}.v15d-payment p{margin:5px 0;font-size:12px;color:#fff}.v15d-payment a{font-size:12px;color:#a0ddff;text-decoration:underline}
+.nav2-hud{position:fixed;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:min(450px,calc(100vw - 24px));z-index:5002;background:rgba(12,35,35,.97);border:1px solid #85ddbd;box-shadow:0 15px 35px #0009;color:#fff;border-radius:18px;padding:12px 16px;pointer-events:none;display:flex;flex-direction:column;gap:5px}
+.nav2-hud.hidden{display:none!important}.nav2-hud-caption{color:#9ddabf;letter-spacing:.11em;font-size:10px;font-weight:800}.nav2-hud strong{font-size:clamp(17px,4.7vw,24px);line-height:1.17;max-height:4.6em;overflow:auto}.nav2-hud #nav2-hud-distance{color:#e4fff3;font-weight:800;font-size:13px}
+body.nav2-active #app > #nav2-hud{visibility:visible!important;pointer-events:none!important}
+.nav2-panel#nav2-live{display:flex;flex-direction:column;gap:6px;max-height:42dvh;bottom:max(9px,env(safe-area-inset-bottom));top:auto;left:50%;transform:translateX(-50%);width:min(450px,calc(100vw - 24px));padding:13px 16px;border:1px solid #6fae9b}
+#nav2-live #nav2-instruction{display:none}#nav2-live .nav2-kicker{display:none}#nav2-live h2{margin:0;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#nav2-live #nav2-status{margin:2px 0;font-size:11px;color:#c9e7dd}#nav2-live .nav2-stats{margin:3px 0;gap:12px;font-size:20px;flex-wrap:nowrap;justify-content:space-between}#nav2-live .nav2-stats>div{flex:1;min-width:0}
+#nav2-live .nav2-controls{margin:4px 0;display:flex;gap:5px;flex-wrap:wrap}#nav2-live .nav2-controls button{min-height:41px;font-weight:750;font-size:11px;padding:8px;flex:1 1 27%}#nav2-live #nav2-stop{background:#8f2934;color:#fff;border-color:#d66b73}
+#nav2-live details{font-size:13px}#nav2-live details summary{padding:7px 0;font-weight:750}#nav2-live #nav2-steps{max-height:22vh;overflow:auto}
+@media(max-width:700px){
+  /* Keep the search, clock, layers and Journeys from competing for the same 350px of width. */
+  .search-panel{top:calc(max(7px,env(safe-area-inset-top)) + 105px)!important;left:8px!important;width:calc(100vw - 16px)!important;max-width:none!important}
+  #search-input{font-size:16px!important;min-width:0}
+  .layers-shell{top:max(7px,env(safe-area-inset-top));left:8px}
+  .corner-actions{top:max(7px,env(safe-area-inset-top));right:calc(142px + 16px)!important;gap:4px}
+  .floating-icon{width:39px;height:43px;font-size:18px}
+  #nav2-packs-open{top:calc(max(7px,env(safe-area-inset-top)) + 54px)!important}
+  .layers-panel{width:calc(100vw - 16px)!important;max-height:calc(100dvh - 122px)!important}
+  .base-controls{max-width:calc(100vw - 90px);overflow-x:auto;scrollbar-width:none;white-space:nowrap}
+  .base-controls::-webkit-scrollbar{display:none}
+  #navigation-sheet{position:fixed!important;top:auto!important;left:0!important;right:0!important;bottom:0!important;width:100%!important;max-height:min(54dvh,600px)!important;border-radius:22px 22px 0 0!important;padding:16px 14px calc(18px + env(safe-area-inset-bottom))!important;overflow-y:auto!important;overscroll-behavior:contain;transform:none!important}
+  #navigation-sheet .navigation-mode-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  #navigation-sheet .navigation-mode{min-height:62px;padding:8px 4px;font-size:12px}
+  #navigation-sheet .navigation-mode small{font-size:9px}
+  #navigation-results.navigation-results{max-height:180px;overflow-y:auto;overscroll-behavior:contain}
+  #navigation-sheet .navigation-endpoint-input{font-size:16px;min-height:39px}
+  #navigation-sheet button,#detail-card .detail-actions button{touch-action:manipulation;min-height:42px}
+  #navigation-sheet .nav2-actions{position:relative;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  #navigation-sheet .nav2-actions:has(#nav2-go){position:sticky;top:0;z-index:5;padding:7px 3px;background:#122238;border-radius:12px;box-shadow:0 5px 18px #0007}
+  #navigation-sheet #nav2-go{background:#9bedd1;color:#0c2720;font-weight:900;grid-column:1/-1;min-height:51px}
+  #detail-card{max-height:58dvh!important;overflow:auto!important;padding-bottom:calc(16px + env(safe-area-inset-bottom))!important}
+  #detail-card .detail-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  #detail-card .detail-actions button{white-space:normal}
+  .nav2-panel#nav2-live{width:calc(100vw - 12px);padding:10px 12px;bottom:max(5px,env(safe-area-inset-bottom));max-height:45dvh;border-radius:16px}
+  .nav2-hud{top:max(6px,env(safe-area-inset-top));width:calc(100vw - 12px);padding:12px}
+  body.nav2-active .right-actions,body.nav2-active .world-clock-shell,body.nav2-active .corner-actions{visibility:hidden!important;pointer-events:none!important}
+  #transport-intelligence{margin-bottom:12px}
+}
+@media(max-width:360px){.corner-actions{right:164px!important}.floating-icon{width:34px;font-size:15px}#navigation-sheet .navigation-mode-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(prefers-reduced-motion:reduce){.nav2-hud{transition:none}}

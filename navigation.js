@@ -4,7 +4,7 @@
   'use strict';
   const C=window.NavigationCore, $=id=>document.getElementById(id);
   const modeNames={drive:'Car',transit:'Public transport',walk:'Walk',taxi:'Taxi',air:'Air + ground (estimate)'};
-  const S={active:false,generation:0,watch:null,timer:null,low:false,data:false,follow:true,rotate:true,fix:null,previous:null,along:null,off:0,lastReroute:0,rerouting:false,lastPaint:0,marker:null,drag:null,wake:null};
+  const S={active:false,generation:0,watch:null,timer:null,low:false,data:false,follow:true,rotate:true,fix:null,previous:null,along:null,off:0,lastReroute:0,rerouting:false,lastPaint:0,marker:null,drag:null,wake:null,compass:null,compassAt:0,compassListener:null,compassSource:null};
   let requestGeneration=0;
   const text=html=>{const d=document.createElement('div');d.innerHTML=String(html||'');return d.textContent||'';};
   const fmtM=n=>n<1000?`${Math.round(n)} m`:`${(n/1000).toFixed(1)} km`;
@@ -17,7 +17,10 @@
   function readPreferences(){try{const p=JSON.parse(localStorage.getItem('everythingApp.navigation.settings.v1')||'{}');S.low=!!p.low;S.data=!!p.data;}catch{}}
   readPreferences();
   $('navigation-sheet').insertAdjacentHTML('beforeend',`<div class="nav2-options"><label><input id="nav2-low" type="checkbox"> Low battery</label><label><input id="nav2-data" type="checkbox"> Data saver</label></div><div class="nav2-actions"><button id="nav2-go" class="nav2-primary" disabled>Go →</button><button id="nav2-compare">Compare modes</button><button id="nav2-save">Save journey notes</button></div><p class="nav2-note">Go follows your location while this page is open. ETA is an estimate. Data saver limits route requests and map movement; map tiles can still use data.</p><div id="nav2-provider" class="nav2-attribution"></div>`);
-  $('app').insertAdjacentHTML('beforeend',`<section id="nav2-live" class="nav2-panel hidden" aria-label="Live navigation"><div class="nav2-kicker">OUR CITIES · ON YOUR WAY</div><h2 id="nav2-destination"></h2><div id="nav2-love" class="nav2-love hidden"><span>♥</span> İyi Yolculuklar Aşkım ❤️</div><p id="nav2-status" role="status">Waiting for your location…</p><h3 id="nav2-instruction"></h3><div class="nav2-stats"><div id="nav2-distance"></div><div id="nav2-time"></div></div><div class="nav2-controls"><button id="nav2-follow">Recenter</button><button id="nav2-heading" aria-pressed="true">Heading up</button><button id="nav2-reroute">Reroute</button><button id="nav2-stop">End</button></div><p id="nav2-compass" class="nav2-note"></p><details><summary>Journey steps & options</summary><div class="nav2-options"><label><input id="nav2-live-low" type="checkbox"> Low battery</label><label><input id="nav2-live-data" type="checkbox"> Data saver</label></div><ol id="nav2-steps"></ol><p class="nav2-note">Keep this page open. GPS may be unavailable underground. No reliable locked-screen guidance or full offline routing. Transit ETA does not account for missed connections.</p><div id="nav2-live-provider" class="nav2-attribution"></div></details></section><button id="nav2-packs-open" class="nav2-packs-button">Journeys</button><section id="nav2-packs" class="nav2-panel hidden" aria-label="Saved journey packs"><div class="nav2-kicker">OUR CITIES · SAVED FOR LATER</div><h2>Journeys</h2><button id="nav2-packs-close">Close</button><p class="nav2-note">Personal notes are saved on this browser only, separately for each welcome profile. No map tiles, Google directions, live times or full offline routing. Export a pack to keep a backup. Anyone using this browser profile may be able to read it.</p><label>Journey title<input id="nav2-pack-title" maxlength="160" placeholder="Our journey home"></label><label>Your saved information<textarea id="nav2-pack-notes" maxlength="12000" placeholder="Write your meeting point, packing reminders, ticket notes or a personal message…"></textarea></label><button id="nav2-pack-create">Save pack on this device</button><div id="nav2-pack-status" role="status"></div><div id="nav2-pack-list"></div></section>`);
+  $('app').insertAdjacentHTML('beforeend',`<section id="nav2-live" class="nav2-panel hidden" aria-label="Live navigation"><div class="nav2-kicker">OUR CITIES · ON YOUR WAY</div><h2 id="nav2-destination"></h2><div id="nav2-love" class="nav2-love hidden"><span>♥</span> İyi Yolculuklar Aşkım ❤️</div><p id="nav2-status" role="status">Waiting for your location…</p><h3 id="nav2-instruction"></h3><div class="nav2-stats"><div id="nav2-distance"></div><div id="nav2-time"></div></div><div id="nav2-controls" class="nav2-controls"><button id="nav2-follow">Recenter</button><button id="nav2-heading" aria-pressed="true">Heading up</button><button id="nav2-reroute">Reroute</button><button id="nav2-stop">End</button></div><p id="nav2-compass" class="nav2-note"></p><details><summary>Journey steps & options</summary><div class="nav2-options"><label><input id="nav2-live-low" type="checkbox"> Low battery</label><label><input id="nav2-live-data" type="checkbox"> Data saver</label></div><ol id="nav2-steps"></ol><p class="nav2-note">Keep this page open. GPS may be unavailable underground. No reliable locked-screen guidance or full offline routing. Transit ETA does not account for missed connections.</p><div id="nav2-live-provider" class="nav2-attribution"></div></details></section><button id="nav2-packs-open" class="nav2-packs-button">Journeys</button><section id="nav2-packs" class="nav2-panel hidden" aria-label="Saved journey packs"><div class="nav2-kicker">OUR CITIES · SAVED FOR LATER</div><h2>Journeys</h2><button id="nav2-packs-close">Close</button><p class="nav2-note">Personal notes are saved on this browser only, separately for each welcome profile. No map tiles, Google directions, live times or full offline routing. Export a pack to keep a backup. Anyone using this browser profile may be able to read it.</p><label>Journey title<input id="nav2-pack-title" maxlength="160" placeholder="Our journey home"></label><label>Your saved information<textarea id="nav2-pack-notes" maxlength="12000" placeholder="Write your meeting point, packing reminders, ticket notes or a personal message…"></textarea></label><button id="nav2-pack-create">Save pack on this device</button><div id="nav2-pack-status" role="status"></div><div id="nav2-pack-list"></div></section>`);
+  // Separate glanceable next-turn banner from the bottom control drawer.
+  $('app').insertAdjacentHTML('beforeend','<aside id="nav2-hud" class="nav2-hud hidden" aria-label="Next navigation instruction"><span class="nav2-hud-caption">NEXT · LIVE GUIDANCE</span><strong id="nav2-hud-instruction">Waiting for your position…</strong><span id="nav2-hud-distance">Allow location to begin</span></aside>');
+  $('nav2-controls').insertAdjacentHTML('afterbegin','<button id="nav2-compass-enable" type="button" title="Allow device orientation">Use phone compass</button>');
   const legacyCalculate=v14eCalculateNavigation;
   $('navigation-mode-grid').insertAdjacentHTML('afterend',`<div id="nav2-custom" class="hidden"><p class="nav2-note">Custom car journey preferences (provider support varies).</p><div class="nav2-options"><label><input id="nav2-avoid-tolls" type="checkbox"> Avoid tolls</label><label><input id="nav2-avoid-highways" type="checkbox"> Avoid motorways</label></div><div class="nav2-actions"><button id="nav2-custom-plan">Calculate custom car route</button><button id="nav2-custom-hand">Build route by hand</button></div><p class="nav2-note">Hand-built transport lines remain available in the original editor; they are not verified turn-by-turn directions.</p></div>`);
   $('nav2-custom-plan').onclick=()=>calculate('custom-drive');
@@ -146,8 +149,11 @@
     if(typeof userLocationWatchId!=='undefined'&&userLocationWatchId!==null){navigator.geolocation.clearWatch(userLocationWatchId);userLocationWatchId=null;followUserLocation=false;updateLocationButton();}
     S.origin={...v14eNavigation.origin};S.destination={...v14eNavigation.destination};
     S.camera={center:map.getCenter(),zoom:map.getZoom(),heading:map.getHeading?.()||0,tilt:map.getTilt?.()||0};
-    setupCandidate(c);$('navigation-sheet').classList.add('hidden');$('nav2-live').classList.remove('hidden');document.body.classList.add('nav2-active');
-    S.inert=[];for(const child of $('app').children)if(!['map','nav2-live'].includes(child.id)){S.inert.push([child,child.inert]);child.inert=true;}
+    setupCandidate(c);$('navigation-sheet').classList.add('hidden');$('nav2-live').classList.remove('hidden');$('nav2-hud').classList.remove('hidden');document.body.classList.add('nav2-active');
+    map.setOptions?.({headingInteractionEnabled:true,tiltInteractionEnabled:false});
+    // Called directly from the Go tap: iOS permission requires a user gesture.
+    enableCompass();
+    S.inert=[];for(const child of $('app').children)if(!['map','nav2-live','nav2-hud'].includes(child.id)){S.inert.push([child,child.inert]);child.inert=true;}
     $('nav2-destination').textContent=S.destination.name||'Your destination';status('Waiting for a fresh GPS location…');$('nav2-stop').focus();
     const romantic=localStorage.getItem(V14D_PROFILE_STORAGE)==='ela';$('nav2-love').classList.toggle('hidden',!romantic);
     clearTimeout(S.loveTimer);S.loveTimer=setTimeout(()=>$('nav2-love').classList.add('hidden'),4500);
@@ -172,12 +178,15 @@
     if(!snapped)return;
     S.off=C.offRoute(fix,snapped.gap,S.off);
     if(snapped.gap<=Math.max(45,fix.accuracy*2))S.along=snapped.along;
-    let heading=Number.isFinite(p.coords.heading)&&p.coords.speed>0.7?p.coords.heading:null;
-    if(heading===null&&S.previous&&C.distance(S.previous,fix)>Math.max(8,fix.accuracy))heading=C.bearing(S.previous,fix);
-    if(heading!==null){S.heading=heading;S.marker?.setIcon({path:google.maps.SymbolPath.FORWARD_CLOSED_ARROW,scale:5,rotation:heading,fillColor:'#a9e7d3',fillOpacity:1,strokeColor:'#102b28',strokeWeight:2});}
-    S.marker?.setPosition(fix);if(S.follow){map.panTo(fix);if(map.getZoom()<16)map.setZoom(16);if(S.rotate&&!S.low&&!S.data&&heading!==null&&map.getRenderingType?.()==='VECTOR'){map.setHeading(heading);map.setTilt(0);}}
+    let gpsHeading=Number.isFinite(p.coords.heading)&&p.coords.speed>0.7?p.coords.heading:null;
+    if(gpsHeading===null&&S.previous&&C.distance(S.previous,fix)>Math.max(8,fix.accuracy))gpsHeading=C.bearing(S.previous,fix);
+    const compassFresh=Number.isFinite(S.compass)&&Date.now()-S.compassAt<5000;
+    const heading=compassFresh?S.compass:gpsHeading;
+    if(heading!==null)S.heading=heading;else S.heading=null;
+    S.marker?.setPosition(fix);if(S.follow){map.panTo(fix);if(map.getZoom()<16)map.setZoom(16);}
+    applyHeading();
     if(!S.previous||C.distance(S.previous,fix)>Math.max(8,fix.accuracy))S.previous=fix;
-    $('nav2-compass').textContent=`${heading===null?'Direction needs movement':Math.round(heading)+'° travel direction'} · ${map.getRenderingType?.()==='VECTOR'?'Heading-up available':'North-up map; direction arrow available'} · GPS ±${Math.round(fix.accuracy)} m`;
+    $('nav2-compass').textContent=`${heading===null?'Heading not available':Math.round(heading)+'° · '+(compassFresh?'phone facing':'GPS travel direction')} · ${map.getRenderingType?.()==='VECTOR'?'vector rotation':'north-up fallback'} · GPS ±${Math.round(fix.accuracy)} m`;
     status(!navigator.onLine?'Offline · following the loaded route only; no rerouting.':S.off?'Away from route · checking your position…':S.follow?'Following your location':'Map browsing · Recenter to follow');
     if(S.off>=3){if(realMode(S.candidate)==='transit')status('Away from planned transit route. Reroute manually to check connections.');else if(S.data)status('Away from route. Data saver: press Reroute when needed.');else reroute();}
     paint();
@@ -191,6 +200,8 @@
     $('nav2-time').innerHTML=S.along===null?`${fmtT(r.seconds)}<small>planned duration · awaiting GPS</small>`:`${fmtT(r.seconds)}<small>ETA ≈ ${eta}${realMode(S.candidate)==='transit'?' · schedule may change':''}</small>`;
     const i=S.steps.findIndex(s=>s.endAlong>(S.along||0)+10);S.stepIndex=i<0?Math.max(0,S.steps.length-1):i;
     const step=S.steps[S.stepIndex];$('nav2-instruction').textContent=step?`${step.instruction}${S.along!==null?' · '+fmtM(Math.max(0,step.endAlong-S.along))+' to step end':''}`:'Follow the highlighted route';
+    $('nav2-hud-instruction').textContent=step?.instruction||'Follow the highlighted route';
+    $('nav2-hud-distance').textContent=S.along===null?'Waiting for a GPS fix':step?`${fmtM(Math.max(0,step.endAlong-S.along))} until next instruction`:'Continue to destination';
     Array.from($('nav2-steps').children).forEach((li,i)=>{if(i===S.stepIndex)li.setAttribute('aria-current','step');else li.removeAttribute('aria-current');});
   }
   async function reroute(manual=false){
@@ -207,18 +218,55 @@
     }catch(e){if(S.active&&generation===S.generation)status('Could not reroute. Previous route retained; check your connection or choose another journey.');}
     finally{if(generation===S.generation)S.rerouting=false;}
   }
+  function applyHeading(){
+    if(!S.active)return;
+    const isVector=map.getRenderingType?.()==='VECTOR';
+    const bearing=Number.isFinite(S.compass)&&Date.now()-S.compassAt<5000?S.compass:S.heading;
+    if(S.follow&&S.rotate&&!S.low&&!S.data&&isVector&&Number.isFinite(bearing)){
+      map.setTilt?.(0);map.setHeading?.(bearing);
+    }
+    // Marker rotation is relative to the currently rotated map, not the north-up screen.
+    S.marker?.setIcon({path:google.maps.SymbolPath.FORWARD_CLOSED_ARROW,scale:6,
+      rotation:Number.isFinite(bearing)?((bearing-(map.getHeading?.()||0)+360)%360):0,
+      fillColor:'#a9e7d3',fillOpacity:1,strokeColor:'#102b28',strokeWeight:2});
+  }
+  async function enableCompass(){
+    if(!S.active||typeof DeviceOrientationEvent==='undefined')return;
+    if(S.compassListener)return;
+    const generation=S.generation;
+    try{
+      if(typeof DeviceOrientationEvent.requestPermission==='function'){
+        const permission=await DeviceOrientationEvent.requestPermission(true);
+        if(permission!=='granted'||!S.active||generation!==S.generation){$('nav2-compass-enable').textContent='Compass permission needed';return;}
+      }
+      if(!S.active||generation!==S.generation)return;
+      S.compassListener=e=>{
+        let value=null;
+        if(Number.isFinite(e.webkitCompassHeading))value=e.webkitCompassHeading;
+        else if(e.absolute===true&&Number.isFinite(e.alpha))value=(360-e.alpha+(screen.orientation?.angle||0)+360)%360;
+        if(value===null)return;S.compass=(value+360)%360;S.compassAt=Date.now();S.compassSource='phone';
+        $('nav2-compass-enable').textContent='Phone compass on';
+        if(Date.now()-(S.lastCompassCamera||0)>250){S.lastCompassCamera=Date.now();applyHeading();}
+      };
+      window.addEventListener('deviceorientationabsolute',S.compassListener);
+      window.addEventListener('deviceorientation',S.compassListener);
+      $('nav2-compass-enable').textContent='Compass waiting…';
+    }catch{$('nav2-compass-enable').textContent='Compass unavailable';}
+  }
+  $('nav2-compass-enable').onclick=enableCompass;
+  function removeCompass(){if(S.compassListener){window.removeEventListener('deviceorientationabsolute',S.compassListener);window.removeEventListener('deviceorientation',S.compassListener);S.compassListener=null;}S.compass=null;S.compassAt=0;$('nav2-compass-enable').textContent='Use phone compass';}
   async function wake(){if(S.low||!S.active||S.arrived||document.hidden)return;const generation=S.generation;try{const lock=await navigator.wakeLock?.request('screen');if(!S.active||S.arrived||generation!==S.generation||S.low||document.hidden)await lock?.release();else S.wake=lock;}catch{}}
   function releaseWake(){S.wake?.release().catch(()=>{});S.wake=null;}
   function finishTracking(){if(S.watch!==null)navigator.geolocation.clearWatch(S.watch);S.watch=null;clearInterval(S.timer);S.timer=null;releaseWake();}
-  function stop(){if(!S.active)return;S.active=false;S.generation++;finishTracking();clearTimeout(S.loveTimer);S.drag?.remove();S.marker?.setMap(null);S.marker=null;S.drag=null;S.rerouting=false;
+  function stop(){if(!S.active)return;S.active=false;S.generation++;finishTracking();clearTimeout(S.loveTimer);removeCompass();$('nav2-hud').classList.add('hidden');S.drag?.remove();S.marker?.setMap(null);S.marker=null;S.drag=null;S.rerouting=false;
     document.body.classList.remove('nav2-active');$('nav2-live').classList.add('hidden');for(const [element,inert] of S.inert||[])element.inert=inert;S.inert=[];
     if(S.camera){map.setCenter(S.camera.center);map.setZoom(S.camera.zoom);map.setHeading?.(S.camera.heading);map.setTilt?.(S.camera.tilt);}
     $('navigation-sheet').classList.remove('hidden');S.savedFocus?.focus();
   }
   $('nav2-stop').onclick=stop;$('nav2-follow').onclick=()=>{S.follow=true;if(S.fix)map.panTo(S.fix);watch();};$('nav2-reroute').onclick=()=>reroute(true);
-  $('nav2-heading').onclick=()=>{S.rotate=!S.rotate;$('nav2-heading').textContent=S.rotate?'Heading up':'North up';$('nav2-heading').setAttribute('aria-pressed',String(S.rotate));if(!S.rotate)map.setHeading?.(0);};
-  document.addEventListener('visibilitychange',()=>{if(!S.active||S.arrived)return;if(document.hidden){S.generation++;finishTracking();}else{S.fix=null;S.lastPaint=0;status('Resuming · waiting for fresh GPS.');watch();S.timer=setInterval(()=>{if(S.fix&&Date.now()-S.fix.time>20000){status('GPS stale · progress paused.');$('nav2-time').textContent='ETA paused';}},5000);S.rerouting=false;wake();}});
-  window.addEventListener('pagehide',()=>{S.generation++;finishTracking();});
+  $('nav2-heading').onclick=()=>{S.rotate=!S.rotate;$('nav2-heading').textContent=S.rotate?'Heading up':'North up';$('nav2-heading').setAttribute('aria-pressed',String(S.rotate));if(!S.rotate)map.setHeading?.(0);applyHeading();};
+  document.addEventListener('visibilitychange',()=>{if(!S.active||S.arrived)return;if(document.hidden){S.generation++;finishTracking();removeCompass();}else{S.fix=null;S.lastPaint=0;status('Resuming · waiting for fresh GPS.');watch();S.timer=setInterval(()=>{if(S.fix&&Date.now()-S.fix.time>20000){status('GPS stale · progress paused.');$('nav2-time').textContent='ETA paused';}},5000);S.rerouting=false;wake();}});
+  window.addEventListener('pagehide',()=>{S.generation++;finishTracking();removeCompass();});
   window.addEventListener('offline',()=>{if(S.active)status('Offline · loaded guidance only. Rerouting and new maps need internet.');});
   window.addEventListener('online',()=>{if(S.active)status('Connection restored. Press Reroute if needed.');});
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(S.active)stop();else $('nav2-packs').classList.add('hidden');}});

@@ -11,7 +11,7 @@
 .nav2-panel summary{cursor:pointer;padding:12px 0}.nav2-panel li{padding:9px 2px;line-height:1.5}.nav2-panel li[aria-current=step]{color:#a9e7d3;font-weight:700}
 .nav2-love{padding:10px;color:#ffd1e1;border-left:2px solid #ffa3c2;animation:nav2-heart .8s ease-out 2}.nav2-love span{display:inline-block;margin-right:6px}
 @keyframes nav2-heart{50%{transform:scale(1.025)}}
-body.nav2-active #app > :not(#map):not(#nav2-live):not(script){visibility:hidden!important;pointer-events:none!important}
+body.nav2-active #app > :not(#map):not(#nav2-live):not(#nav2-hud):not(script){visibility:hidden!important;pointer-events:none!important}
 body.nav2-active #map{visibility:visible!important}
 .nav2-packs-button{position:fixed;bottom:84px;left:16px;z-index:1500;border:1px solid #52677e;background:#17283a;color:#e7f4ff;border-radius:12px;padding:12px;min-height:44px}
 .nav2-pack{border:1px solid #435971;border-radius:12px;padding:12px;margin:12px 0}.nav2-pack pre{white-space:pre-wrap;font:inherit;line-height:1.6;overflow-wrap:anywhere}
