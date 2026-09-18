@@ -1,0 +1,13 @@
+/* v1.5F travel planner model: non-sensitive itinerary metadata only. */
+(function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;if(root)root.EverythingTravelCore=api;})(typeof window!=='undefined'?window:null,function(){'use strict';
+const CITIES=['london','rome','istanbul','izmir'];const CURRENCIES=['GBP','EUR','TRY','USD'];
+function text(v,max=250){return String(v??'').trim().slice(0,max);}
+function date(v){const d=String(v||'');return /^\d{4}-\d{2}-\d{2}$/.test(d)&&!Number.isNaN(new Date(d+'T12:00:00Z').valueOf())?d:'';}
+function makeTrip(values={},uid){const id=/^[a-zA-Z0-9_-]{8,90}$/.test(String(values.id||''))?String(values.id):('trip-'+(uid||Math.random().toString(36).slice(2)));
+ return {id,name:text(values.name,100)||'Untitled trip',city:CITIES.includes(values.city)?values.city:'london',start:date(values.start),end:date(values.end),memo:text(values.memo,1500),sharing:values.sharing==='together'?'together':'private',itinerary:Array.isArray(values.itinerary)?values.itinerary.slice(0,200).map(x=>({id:text(x.id,75),day:date(x.day),time:/^\d{2}:\d{2}$/.test(String(x.time||''))?x.time:'',kind:['flight','reservation','journey','meeting','other'].includes(x.kind)?x.kind:'other',city:CITIES.includes(x.city)?x.city:'london',place:text(x.place,150),title:text(x.title,130),details:text(x.details,500)})):[],packing:Array.isArray(values.packing)?values.packing.slice(0,250).map(x=>({id:text(x.id,75),item:text(x.item,120),done:Boolean(x.done)})):[],expenses:Array.isArray(values.expenses)?values.expenses.slice(0,250).map(x=>({id:text(x.id,75),item:text(x.item,120),amount:Number(x.amount)>=0&&Number.isFinite(Number(x.amount))?Math.round(Number(x.amount)*100)/100:0,currency:CURRENCIES.includes(x.currency)?x.currency:'GBP'})):[],documents:Array.isArray(values.documents)?values.documents.slice(0,30).map(x=>({id:text(x.id,75),label:text(x.label,120),expiry:date(x.expiry)})):[]};
+}
+function totals(expenses){const amounts={};for(const row of expenses||[]){if(!CURRENCIES.includes(row.currency))continue;amounts[row.currency]=Math.round(((amounts[row.currency]||0)+Number(row.amount||0))*100)/100;}return amounts;}
+function daysUntil(dateText,today){if(!date(dateText)||!date(today))return null;return Math.round((new Date(dateText+'T12:00:00Z')-new Date(today+'T12:00:00Z'))/86400000);}
+function validImport(value){if(!value||value.format!=='everything-trip-v1'||!Array.isArray(value.trips)||value.trips.length>30)throw Error('Not a valid Everything App trip export (maximum 30 trips).');return value.trips.map((t,i)=>makeTrip(t,'import'+i));}
+return {CITIES,CURRENCIES,text,date,makeTrip,totals,daysUntil,validImport};
+});

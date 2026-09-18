@@ -37,7 +37,7 @@ function section(parent,title){const s=create('section',undefined,'v15e-subsecti
 function cityId(){try{return currentCityId in C.CITIES?currentCityId:'london';}catch{return 'london';}}
 function hideMarkers(){state.markers.forEach(m=>m.setMap?.(null));state.markers=[];state.bikeEnabled=false;}
 function hideClimate(){state.climateGeneration++;state.climateMarkers.forEach(m=>m.setMap?.(null));state.climateMarkers=[];state.climateLayer='';state.climateOrigin='';}
-function hideSafety(){state.safetyRequest++;state.safetyPriorityRequest++;state.safetyReference=null;state.safetyCompareCircles.forEach(c=>c.setMap?.(null));state.safetyCompareCircles=[];if(state.safetyCircle){state.safetyCircle.setMap(null);state.safetyCircle=null;}}
+function hideSafety(){window.EverythingSafety?.clear?.();state.safetyRequest++;state.safetyPriorityRequest++;state.safetyReference=null;state.safetyCompareCircles.forEach(c=>c.setMap?.(null));state.safetyCompareCircles=[];if(state.safetyCircle){state.safetyCircle.setMap(null);state.safetyCircle=null;}}
 function close(){state.open=false;hideSafety();state.generation++;panel.classList.add('hidden');launch.setAttribute('aria-expanded','false');}
 function open(tab='climate'){if(document.body.classList.contains('nav2-active'))return;state.open=true;state.tab=tab;panel.classList.remove('hidden');launch.setAttribute('aria-expanded','true');render();}
 function showMessage(msg){const p=$('v15e-city-content');p.replaceChildren();note(p,msg);}
@@ -132,6 +132,7 @@ function safetyData(node,id){
   intro.append(link('Emniyet Genel Müdürlüğü · official information','https://www.egm.gov.tr/'));
   note(intro,'National crime-victimisation data do not support street-level claims for '+c.name+'. Anonymous anecdotes, social-media comments and personal Not to Go markers are not converted into numerical risk scores.','warn');
  }
+ window.EverythingSafety?.mount?.(intro,id);
  const context=section(node,'Practical context');
  note(context,'A lower reports index does NOT imply a safe street. Compare sources and the date, use well-used and illuminated routes when practical, and seek a staffed place or contact emergency services if you feel threatened. No automatic rerouting is performed from this index.');
 }

@@ -300,11 +300,11 @@
       const label=row.collection==="together"?"Together":row.collection==="ela"?"Ela":"Kağan";
       return `<div class="account-list-item"><div><b>${html(row.payload.name||"Untitled")}</b><small>${html(label)} · ${html(row.city)} · ${html(row.kind)} ${mine?"· Mine":"· Partner's"}</small></div><div class="account-row-actions">${mine?`<button data-collection="${html(row.id)}">${row.collection==="together"?"Move to mine":"Move to Together"}</button><button data-trash="${html(row.id)}">Delete</button><button data-history="${html(row.id)}">History</button>`:"<span class='account-readonly'>View only</span>"}</div></div>`;
     }).join("") || '<p class="account-help">No cloud favorites yet. Import your existing favorites or add a new place after activating Cloud.</p>';
-    notes.innerHTML=active.filter(x=>x.kind==="note").map(row=>{
+    notes.innerHTML=active.filter(x=>x.kind==="note"&&x.payload?.type!=="travel_plan").map(row=>{
       const mine=row.author_id===state.user?.id;const editable=mine||row.visibility==="shared";
       return `<div class="account-list-item"><div><b>${html(row.payload.title)}</b><small>${html(row.city)} · ${row.visibility==="private"?"Only me":"Shared"} · ${html(row.author_id===state.user?.id?handle:"Partner")}</small><p>${html(row.payload.text)}</p></div><div class="account-row-actions">${editable?`<button data-edit-note="${html(row.id)}">Edit</button>`:""}${mine||row.visibility==="shared"?`<button data-trash="${html(row.id)}">Trash</button>`:""}<button data-history="${html(row.id)}">History</button></div></div>`;
     }).join("")||'<p class="account-help">No cloud notes yet.</p>';
-    trash.innerHTML=state.rows.filter(x=>x.deleted_at).map(row=>`<div class="account-list-item"><div><b>${html(row.payload.name||row.payload.title||"Item")}</b><small>${html(row.kind)} · ${html(row.deleted_at)}</small></div><button data-restore="${html(row.id)}">Restore</button></div>`).join("")||'<p class="account-help">Trash is empty.</p>';
+    trash.innerHTML=state.rows.filter(x=>x.deleted_at&&x.payload?.type!=="travel_plan").map(row=>`<div class="account-list-item"><div><b>${html(row.payload.name||row.payload.title||"Item")}</b><small>${html(row.kind)} · ${html(row.deleted_at)}</small></div><button data-restore="${html(row.id)}">Restore</button></div>`).join("")||'<p class="account-help">Trash is empty.</p>';
     for(const panel of [node,notes,trash]){
       panel.querySelectorAll("[data-trash]").forEach(b=>b.addEventListener("click",()=>guard(()=>softDelete(b.dataset.trash))));
       panel.querySelectorAll("[data-history]").forEach(b=>b.addEventListener("click",()=>guard(()=>versions(b.dataset.history))));
@@ -327,7 +327,7 @@
     button.addEventListener("click",()=>{selectedForNote(title,coords);own("account-modal").classList.remove("hidden");own("account-note-text").focus();});
     actions.appendChild(button);
     // Show shared/personal notes in the same info-panel style as other place details.
-    const matched=state.rows.filter(row=>row.kind==="note"&&!row.deleted_at&&(
+    const matched=state.rows.filter(row=>row.kind==="note"&&row.payload?.type!=="travel_plan"&&!row.deleted_at&&(
       String(row.payload.title||"").trim().toLowerCase()===String(title).trim().toLowerCase()
       || (coords && row.payload.coords && Math.abs(Number(row.payload.coords.lat)-Number(coords.lat))<0.00035
          && Math.abs(Number(row.payload.coords.lng)-Number(coords.lng))<0.00035)
@@ -400,6 +400,48 @@
   own("account-place-collection")?.addEventListener("change",event=>{if(event.target.value!=="together"&&event.target.value!==getOwnCollection())event.target.value=getOwnCollection();});
   window.addEventListener("online",()=>{if(state.dirty)guard(flush);});
   document.addEventListener("visibilitychange",()=>{if(!document.hidden&&state.active&&!state.dirty)guard(refreshCloud);});
+  // v1.5F: narrowly scoped travel-plan adapter over EXISTING RLS-protected note records.
+  // No new SQL, client/service keys, extra privileges or cross-account private reads.
+  window.EverythingTripCloud=Object.freeze({
+    identity:()=>state.member&&state.user?state.user.id:null,
+    ready:()=>Boolean(state.client&&state.user&&state.member),
+    async list(){
+      if(!state.client||!state.member||!state.user)throw Error("Sign in and pair your account to sync trips.");
+      const {data,error}=await state.client.from("everything_entries")
+        .select("id,author_id,client_id,collection,visibility,city,payload,updated_at,deleted_at")
+        .eq("kind","note").limit(1000);
+      if(error)throw error;
+      return (data||[]).filter(x=>x.payload?.type==="travel_plan"&&!x.deleted_at);
+    },
+    async save(trip,previous){
+      if(!state.client||!state.member||!state.user)throw Error("Sign in and pair accounts before cloud syncing.");
+      if(!trip?.id||String(trip.id).length>85)throw Error("Invalid trip identifier.");
+      const payload={type:"travel_plan",title:String(trip.name||"Trip").slice(0,100),trip};
+      if(JSON.stringify(payload).length>110000)throw Error("Trip too large to sync. Keep sensitive documents outside the planner.");
+      if(previous){
+        if(previous.visibility!=="shared"&&previous.author_id!==state.user.id)throw Error("This trip is private to its author.");
+        if(previous.author_id!==state.user.id&&previous.collection!=="together")throw Error("Partner edits are allowed only on shared Together trips.");
+        if((previous.collection==="together")!==(trip.sharing==="together"))throw Error("Changing an existing trip’s sharing is not supported. Export and create a new trip instead.");
+        const {data,error}=await state.client.from("everything_entries")
+           .update({payload}).eq("id",previous.id).eq("updated_at",previous.updated_at).select("id,author_id,client_id,collection,visibility,city,payload,updated_at,deleted_at").maybeSingle();
+        if(error)throw error;if(!data)throw Error("This trip changed on another device. Reload before saving; your local draft is preserved.");
+        return data;
+      }
+      const {data,error}=await state.client.from("everything_entries").insert({
+        author_id:state.user.id,kind:"note",client_id:"travel-"+trip.id,
+        collection:trip.sharing==="together"?"together":state.member.handle,
+        visibility:trip.sharing==="together"?"shared":"private",city:trip.city,payload,deleted_at:null
+      }).select("id,author_id,client_id,collection,visibility,city,payload,updated_at,deleted_at").single();
+      if(error)throw error;return data;
+    },
+    async remove(previous){
+      if(!state.client||!state.member||!state.user)throw Error("Sign in first.");
+      if(!previous||previous.author_id!==state.user.id)throw Error("Only the creator can delete this trip.");
+      const {data,error}=await state.client.from("everything_entries")
+       .update({deleted_at:new Date().toISOString()}).eq("id",previous.id).eq("updated_at",previous.updated_at).select("id").maybeSingle();
+      if(error)throw error;if(!data)throw Error("Trip was changed elsewhere; reload first.");return true;
+    }
+  });
   attach();refreshUI();
   if(config())guard(()=>connect());
   console.info("Everything App 1.5A cloud accounts module loaded (opt-in; local data preserved)");
