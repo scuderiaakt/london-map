@@ -10,8 +10,10 @@
   <title>Everything App by Kağan</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon.svg" />
-  <link rel="stylesheet" href="styles.css?v=1.5B" />
-  <link rel="stylesheet" href="navigation.css?v=1.5B">
+  <link rel="stylesheet" href="styles.css?v=1.5C" />
+  <link rel="stylesheet" href="navigation.css?v=1.5C">
+  <link rel="stylesheet" href="world-clock.css?v=1.5C">
+  <link rel="stylesheet" href="transport.css?v=1.5C">
 </head>
 <body>
   <main id="app">
@@ -152,9 +154,12 @@
       <button id="item-focus-chip" class="item-focus-chip glass hidden" aria-label="Exit focused transport item">◎ <span data-item-focus-name></span> · Exit focus</button>
     </section>
 
-    <div id="city-clock" class="city-clock glass" aria-live="polite">
-      <div id="city-clock-time" class="city-clock-time">--:--</div>
-      <div id="city-clock-date" class="city-clock-date">---</div>
+    <div id="world-clock-shell" class="world-clock-shell" aria-label="World clock">
+      <button id="city-clock" type="button" class="city-clock glass" aria-expanded="false" aria-controls="world-clock-menu" aria-label="Show other city times">
+        <div id="city-clock-time" class="city-clock-time">--:--</div>
+        <div id="city-clock-date" class="city-clock-date">---</div>
+      </button>
+      <div id="world-clock-menu" class="world-clock-menu" role="region" aria-label="City times and UTC offsets" tabindex="0" hidden></div>
     </div>
     <div class="corner-actions">
       <button id="info-btn" class="floating-icon glass" aria-label="Map information" title="Information">ⓘ</button>
@@ -424,10 +429,14 @@
 
 
 
-  <script src="app.js?v=1.5B"></script>
-  <script src="accounts.js?v=1.5B"></script>
-  <script src="navigation-core.js?v=1.5B"></script>
-  <script src="navigation.js?v=1.5B"></script>
+  <script src="app.js?v=1.5C"></script>
+  <script src="accounts.js?v=1.5C"></script>
+  <script src="navigation-core.js?v=1.5C"></script>
+  <script src="navigation.js?v=1.5C"></script>
+  <script src="world-clock-core.js?v=1.5C"></script>
+  <script src="world-clock.js?v=1.5C"></script>
+  <script src="transport-core.js?v=1.5C"></script>
+  <script src="transport.js?v=1.5C"></script>
   <script>
     // A refreshed, network-first shell prevents stale UI after future releases.
     if (location.protocol === "https:" && "serviceWorker" in navigator) {

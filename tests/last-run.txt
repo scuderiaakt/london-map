@@ -1,26 +1,160 @@
-✔ coordinate validation rejects null, strings and impossible positions (1.5093ms)
-✔ segment projection measures progress between sparse vertices (0.8551ms)
-✔ heading and off-route hysteresis reject weak GPS (0.1733ms)
-✔ loop crossings do not jump thousands of metres ahead (0.1215ms)
-✔ comparison issues three requests, reuses car for taxi and handles partial failures (3.5004ms)
-✔ new requests and endpoint changes invalidate late route responses (4.9035ms)
-✔ location permission denial is actionable, End clears watches and timers (16.6235ms)
-✔ accurate movement advances steps and arrives without restarting GPS (2.1999ms)
-✔ low battery replaces GPS watch; poor accuracy pauses progress (1.4001ms)
-✔ rerouting requires sustained deviation and respects data saver (2.3846ms)
-✔ reroute completion after End cannot reopen or replace guidance (3.8482ms)
-✔ offline requests make no API calls; packs work without Google or Supabase (1.6909ms)
-✔ pack quota failure is visible and does not report saved (0.9013ms)
-✔ custom car preferences reach provider; original custom editor remains accessible (1.0606ms)
-✔ hidden document suspends GPS and resumes with a fresh watch (1.2159ms)
-✔ every precached release asset exists (20.7931ms)
-✔ service worker ignores APIs, tiles, other apps and non-GET (0.772ms)
-✔ offline navigation serves scoped shell; known assets remain available (0.8228ms)
-ℹ tests 18
-ℹ suites 0
-ℹ pass 18
-ℹ fail 0
-ℹ cancelled 0
-ℹ skipped 0
-ℹ todo 0
-ℹ duration_ms 109.5465
+TAP version 13
+# Subtest: coordinate validation rejects null, strings and impossible positions
+ok 1 - coordinate validation rejects null, strings and impossible positions
+  ---
+  duration_ms: 1.563659
+  type: 'test'
+  ...
+# Subtest: segment projection measures progress between sparse vertices
+ok 2 - segment projection measures progress between sparse vertices
+  ---
+  duration_ms: 0.564118
+  type: 'test'
+  ...
+# Subtest: heading and off-route hysteresis reject weak GPS
+ok 3 - heading and off-route hysteresis reject weak GPS
+  ---
+  duration_ms: 0.157737
+  type: 'test'
+  ...
+# Subtest: loop crossings do not jump thousands of metres ahead
+ok 4 - loop crossings do not jump thousands of metres ahead
+  ---
+  duration_ms: 1.415156
+  type: 'test'
+  ...
+# Subtest: comparison issues three requests, reuses car for taxi and handles partial failures
+ok 5 - comparison issues three requests, reuses car for taxi and handles partial failures
+  ---
+  duration_ms: 4.722375
+  type: 'test'
+  ...
+# Subtest: new requests and endpoint changes invalidate late route responses
+ok 6 - new requests and endpoint changes invalidate late route responses
+  ---
+  duration_ms: 9.546802
+  type: 'test'
+  ...
+# Subtest: location permission denial is actionable, End clears watches and timers
+ok 7 - location permission denial is actionable, End clears watches and timers
+  ---
+  duration_ms: 16.412751
+  type: 'test'
+  ...
+# Subtest: accurate movement advances steps and arrives without restarting GPS
+ok 8 - accurate movement advances steps and arrives without restarting GPS
+  ---
+  duration_ms: 2.897543
+  type: 'test'
+  ...
+# Subtest: low battery replaces GPS watch; poor accuracy pauses progress
+ok 9 - low battery replaces GPS watch; poor accuracy pauses progress
+  ---
+  duration_ms: 1.727014
+  type: 'test'
+  ...
+# Subtest: rerouting requires sustained deviation and respects data saver
+ok 10 - rerouting requires sustained deviation and respects data saver
+  ---
+  duration_ms: 2.105713
+  type: 'test'
+  ...
+# Subtest: reroute completion after End cannot reopen or replace guidance
+ok 11 - reroute completion after End cannot reopen or replace guidance
+  ---
+  duration_ms: 4.194351
+  type: 'test'
+  ...
+# Subtest: offline requests make no API calls; packs work without Google or Supabase
+ok 12 - offline requests make no API calls; packs work without Google or Supabase
+  ---
+  duration_ms: 1.551391
+  type: 'test'
+  ...
+# Subtest: pack quota failure is visible and does not report saved
+ok 13 - pack quota failure is visible and does not report saved
+  ---
+  duration_ms: 0.888855
+  type: 'test'
+  ...
+# Subtest: custom car preferences reach provider; original custom editor remains accessible
+ok 14 - custom car preferences reach provider; original custom editor remains accessible
+  ---
+  duration_ms: 1.931282
+  type: 'test'
+  ...
+# Subtest: hidden document suspends GPS and resumes with a fresh watch
+ok 15 - hidden document suspends GPS and resumes with a fresh watch
+  ---
+  duration_ms: 1.350764
+  type: 'test'
+  ...
+# Subtest: every precached release asset exists
+ok 16 - every precached release asset exists
+  ---
+  duration_ms: 24.167075
+  type: 'test'
+  ...
+# Subtest: service worker ignores APIs, tiles, other apps and non-GET
+ok 17 - service worker ignores APIs, tiles, other apps and non-GET
+  ---
+  duration_ms: 1.867765
+  type: 'test'
+  ...
+# Subtest: offline navigation serves scoped shell; known assets remain available
+ok 18 - offline navigation serves scoped shell; known assets remain available
+  ---
+  duration_ms: 1.261174
+  type: 'test'
+  ...
+# Subtest: four city times are independent of map city and reflect summer offsets
+ok 19 - four city times are independent of map city and reflect summer offsets
+  ---
+  duration_ms: 21.94728
+  type: 'test'
+  ...
+# Subtest: winter UTC offsets handle DST without hard-coded rules
+ok 20 - winter UTC offsets handle DST without hard-coded rules
+  ---
+  duration_ms: 1.123338
+  type: 'test'
+  ...
+# Subtest: recognize TfL line names but do not guess operator IDs
+ok 21 - recognize TfL line names but do not guess operator IDs
+  ---
+  duration_ms: 0.643136
+  type: 'test'
+  ...
+# Subtest: transit instructions expose only fields actually supplied by provider
+ok 22 - transit instructions expose only fields actually supplied by provider
+  ---
+  duration_ms: 0.55915
+  type: 'test'
+  ...
+# Subtest: TfL response only accepts matching lines and unknown responses fail closed
+ok 23 - TfL response only accepts matching lines and unknown responses fail closed
+  ---
+  duration_ms: 0.554473
+  type: 'test'
+  ...
+# Subtest: v1.5C web assets are linked in index and versioned cache; old app and auth untouched
+ok 24 - v1.5C web assets are linked in index and versioned cache; old app and auth untouched
+  ---
+  duration_ms: 18.123066
+  type: 'test'
+  ...
+# Subtest: clock opens by click, closes on Escape/outside, keeps map city and scrolls fixed-width rows
+ok 25 - clock opens by click, closes on Escape/outside, keeps map city and scrolls fixed-width rows
+  ---
+  duration_ms: 18.821264
+  type: 'test'
+  ...
+1..25
+# tests 25
+# suites 0
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 156.308212

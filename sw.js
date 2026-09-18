@@ -1,6 +1,6 @@
 /* Same-origin app shell only. Never cache authentication, routes or map tiles. */
-const CACHE_NAME='everything-app-shell-v1.5B-'+encodeURIComponent(new URL(self.registration.scope).pathname);
-const ASSETS=['./index.html','./app.js?v=1.5B','./accounts.js?v=1.5B','./styles.css?v=1.5B','./navigation.js?v=1.5B','./navigation-core.js?v=1.5B','./navigation.css?v=1.5B','./manifest.webmanifest','./icon.svg'];
+const CACHE_NAME='everything-app-shell-v1.5C-'+encodeURIComponent(new URL(self.registration.scope).pathname);
+const ASSETS=['./index.html','./app.js?v=1.5C','./accounts.js?v=1.5C','./styles.css?v=1.5C','./navigation.js?v=1.5C','./navigation-core.js?v=1.5C','./navigation.css?v=1.5C','./world-clock-core.js?v=1.5C','./world-clock.js?v=1.5C','./world-clock.css?v=1.5C','./transport-core.js?v=1.5C','./transport.js?v=1.5C','./transport.css?v=1.5C','./manifest.webmanifest','./icon.svg'];
 const URLS=new Set(ASSETS.map(p=>new URL(p,self.registration.scope).href));
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
