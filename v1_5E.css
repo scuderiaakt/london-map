@@ -9,3 +9,24 @@ body.nav2-active #v15e-city-open,body.nav2-active #v15e-city-panel{display:none!
 .v15e-traffic-tools,.v15e-fare-box{margin:12px 0;padding:12px;border:1px solid #567b83;border-radius:13px;background:#142c3bee;color:#e7faf4;line-height:1.4}.v15e-traffic-tools strong,.v15e-fare-box h3{font:800 13px system-ui;color:#b7f5db;margin:0}.v15e-route-heading{display:flex;align-items:center;gap:5px;justify-content:space-between}.v15e-route-heading span{font:10px system-ui;color:#b1c7d0}.v15e-traffic-tools p,.v15e-fare-note,.v15e-fare-source{font:11px/1.45 system-ui;color:#c4d3dc;margin:8px 0}.v15e-traffic-actions{display:flex;gap:7px;margin-top:11px}.v15e-traffic-actions button{flex:1;min-height:42px;border-radius:9px;border:1px solid #7aa999;background:#285451;color:#f4fff7;font:750 11px system-ui;cursor:pointer;padding:7px}.v15e-traffic-actions button:disabled{opacity:.42;cursor:default}.v15e-traffic-key{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;font:750 10px system-ui}.v15e-traffic-key span:nth-child(1){color:#36d77b}.v15e-traffic-key span:nth-child(2){color:#ffcb58}.v15e-traffic-key span:nth-child(3){color:#ff6376}.v15e-fare-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:11px 0}.v15e-fare-option{border:1px solid #557c79;border-radius:10px;padding:10px;background:#1a3943;min-width:0;display:flex;flex-direction:column;gap:7px;overflow-wrap:anywhere}.v15e-fare-option small{font:700 10px system-ui;color:#a9dad0}.v15e-fare-option strong{font:700 11px/1.35 system-ui;color:white}.v15e-fare-option b{font:850 14px system-ui;color:#e3ffd7}.v15e-fare-source{font-size:10px}.v15e-layer-button{min-height:42px}
 @media(max-width:700px){#v15e-city-open{top:auto!important;right:10px!important;bottom:calc(105px + env(safe-area-inset-bottom))!important;z-index:710;min-height:46px}.v15e-city-panel{top:auto;bottom:0;left:0;right:0;width:100%;height:min(79dvh,680px);max-height:calc(100dvh - 55px);border-radius:22px 22px 0 0;padding-bottom:env(safe-area-inset-bottom);z-index:4500}.v15e-header{padding:13px 15px 10px}.v15e-tabs{padding:8px}.v15e-tabs button{min-height:42px}.v15e-city-content{padding:11px}.v15e-fare-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.v15e-traffic-actions button{min-height:46px}body:has(#navigation-sheet:not(.hidden)) #v15e-city-open{display:none!important}}
 @media(max-width:360px){.v15e-fare-grid{grid-template-columns:1fr}.v15e-route-heading{flex-wrap:wrap}}
+
+/* v1.5E.1: discoverable horizontal scrolling for Transport & City Information. */
+.v15e-strip-wrap{display:flex;align-items:center;gap:5px;width:100%;min-width:0;max-width:100%;overflow:hidden}
+.v15e-scroll-strip{flex:1 1 auto;min-width:0;width:0;overflow-x:auto!important;overflow-y:hidden!important;flex-wrap:nowrap!important;scrollbar-width:thin!important;scrollbar-color:#8db9b0 #162a35;padding:3px 1px 8px!important;touch-action:pan-x;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+.v15e-scroll-strip::-webkit-scrollbar{display:block!important;height:5px}
+.v15e-scroll-strip::-webkit-scrollbar-track{background:#162a35;border-radius:6px}
+.v15e-scroll-strip::-webkit-scrollbar-thumb{background:#8db9b0;border-radius:6px}
+.v15e-scroll-strip .panel-layer-toggle{flex:0 0 auto;scroll-snap-align:start}
+.v15e-scroll-strip:focus-visible{outline:2px solid #a9e7d3;outline-offset:2px}
+.v15e-strip-arrow{flex:0 0 32px;width:32px;height:42px;border:1px solid #617c83;border-radius:10px;background:#223947;color:#f0faf8;font-size:26px;font-weight:700;line-height:1;cursor:pointer;touch-action:manipulation}
+.v15e-strip-arrow:disabled{opacity:.32;cursor:default}
+.v15e-strip-arrow:not(:disabled):focus-visible{outline:2px solid #a9e7d3}
+@media(max-width:700px){.v15e-strip-arrow{flex-basis:34px;width:34px;min-height:44px}.v15e-scroll-strip{padding-bottom:9px!important}}
+
+/* v1.5E.2: source-linked crime reports comparison controls, scrollable on phone. */
+.v15e-safety-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:stretch}
+.v15e-safety-actions .v15e-chip{flex:1 1 115px;min-width:0;margin:0;white-space:normal}
+.v15e-safety-actions .v15e-chip:disabled{opacity:.46;cursor:not-allowed}
+.v15e-index{display:inline-flex;align-self:flex-start;border:2px solid #f0c86a;border-radius:12px;padding:10px 13px;background:#132734;color:#f8fffb;font:800 15px system-ui;margin:5px 0}
+.v15e-safety-comparison .v15e-subsection{margin-top:12px;background:#122c3c}
+@media(max-width:700px){.v15e-safety-actions .v15e-chip{min-height:46px}.v15e-index{font-size:14px}}

@@ -18,5 +18,20 @@ return base;}
 function safeNumber(n){return n===null||n===undefined||n===""?null:Number.isFinite(Number(n))?Number(n):null;}
 function aqiLabel(value){const n=safeNumber(value);if(n===null)return 'Unavailable';if(n<=20)return 'Good';if(n<=40)return 'Fair';if(n<=60)return 'Moderate';if(n<=80)return 'Poor';if(n<=100)return 'Very poor';return 'Extremely poor';}
 function nearest(points,position,n=6){const d=p=>Math.hypot((Number(p.lat)-position.lat)*111,(Number(p.lon??p.lng)-position.lng)*74);return points.filter(p=>Number.isFinite(Number(p.lat))&&Number.isFinite(Number(p.lon??p.lng))).sort((a,b)=>d(a)-d(b)).slice(0,n);}
-return {CITIES,city,holidaysForCity,fareForRoute,aqiLabel,safeNumber,nearest};
+// A transparent, reference-relative *recorded-reports* index, not a personal safety score.
+// Compare equal-radius searches, the same Police.uk reference month, and the same category filter.
+const STREET_RELEVANT=Object.freeze(['violence-and-sexual-offences','possession-of-weapons','robbery']);
+function reportsSummary(items){
+ if(!Array.isArray(items))throw new TypeError('Expected an array of police reports');
+ const months=[...new Set(items.map(x=>String(x?.month||'')).filter(x=>/^\d{4}-\d{2}$/.test(x)))];
+ if(months.length!==1)return {month:null,all:items.length,crimes:null,asb:null,violent:null,robbery:null,weapons:null};
+ const counts={};for(const item of items){const name=String(item?.category||'unknown');counts[name]=(counts[name]||0)+1;}
+ return {month:months[0],all:items.length,crimes:items.length-(counts['anti-social-behaviour']||0),asb:counts['anti-social-behaviour']||0,violent:counts['violence-and-sexual-offences']||0,robbery:counts['robbery']||0,weapons:counts['possession-of-weapons']||0};
+}
+function reportsIndex(reference,comparison){
+ if(!reference||!comparison||!reference.month||reference.month!==comparison.month)return null;
+ if(!Number.isInteger(reference.crimes)||reference.crimes<=0||!Number.isInteger(comparison.crimes)||comparison.crimes<0)return null;
+ return Math.round(100*comparison.crimes/reference.crimes);
+}
+return {CITIES,city,holidaysForCity,fareForRoute,aqiLabel,safeNumber,nearest,STREET_RELEVANT,reportsSummary,reportsIndex};
 });
